@@ -1,0 +1,539 @@
+import { useEffect, useCallback, useState, useRef, useMemo } from 'react';
+import { useNavigate, useLocation } from 'react-router-dom';
+import { Home, Pause, Play, SkipForward } from 'lucide-react';
+import { Button } from '../common';
+import {
+  GameCanvas,
+  WordInput,
+  TimerDisplay,
+  LivesDisplay,
+  RepeatButton,
+  ContextButton,
+  CompletedWordsList,
+  ConfettiEffect,
+  MeadowCanvas,
+} from '../game';
+import { useGameContext } from '@/context/GameContext';
+import { useGameState, useGameTimer, useTextToSpeech, useSpellingHint, useWordContext } from '@/hooks';
+import { selectWordsForSessionDetailed } from '@/utils';
+import { GameModeId, getGameModeConfig } from '@/types';
+import { defaultWords } from '@/data/defaultWords';
+import { GRADE_WORDS } from '@/data/gradeWords';
+
+export function GameScreen() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const { wordBank, recordGame, markWordsAsIntroduced, recordWordAttempt } = useGameContext();
+  const { speak, isSupported: ttsSupported } = useTextToSpeech();
+
+  // Get mode from route state, default to savannah
+  const modeId: GameModeId = (location.state as { mode?: GameModeId })?.mode || 'savannah';
+  const modeConfig = getGameModeConfig(modeId);
+
+  const {
+    gameState,
+    startGame,
+    setInput,
+    submitAnswer,
+    handleTimeUp,
+    nextWord,
+    skipWord,
+    hideConfetti,
+    getCurrentWord,
+    getGameResult,
+  } = useGameState();
+
+  const [recentlyLostLife, setRecentlyLostLife] = useState(false);
+  const [isPaused, setIsPaused] = useState(false);
+  const previousLives = useRef(gameState.lives);
+  const previousWrongAttemptsCount = useRef(0);
+  // Refs for context escalation tracking (non-Meadow modes)
+  const previousWrongAttemptsForContext = useRef(0);
+  const previousContextLevel = useRef<'word' | 'definition' | 'full'>('word');
+  // Refs for real-time attempt recording
+  const previousRecordedWrongAttempts = useRef(0);
+  const previousCompletedCount = useRef(0);
+
+  // Word context for progressive disclosure pronunciation
+  const {
+    contextLevel,
+    escalateContext,
+    resetContext,
+    canEscalate,
+    formatPronunciation,
+  } = useWordContext();
+
+  // Look up the current word's full data (definition, example sentence) from wordBank
+  // Falls back to defaultWords and gradeWords for words imported before definitions were added
+  const currentWordData = useMemo(() => {
+    const currentWord = getCurrentWord();
+    if (!currentWord) return null;
+
+    const wordLower = currentWord.toLowerCase();
+    const wordObj = wordBank.words.find(w => w.text.toLowerCase() === wordLower);
+
+    // Get definition/example from wordBank first
+    let definition = wordObj?.definition;
+    let exampleSentence = wordObj?.exampleSentence;
+
+    // Fall back to defaultWords if not in localStorage
+    if (!definition || !exampleSentence) {
+      const defaultWord = defaultWords.find(w => w.word.toLowerCase() === wordLower);
+      if (defaultWord) {
+        definition = definition || defaultWord.definition;
+        exampleSentence = exampleSentence || defaultWord.example;
+      }
+    }
+
+    // Fall back to grade words if still not found
+    if (!definition || !exampleSentence) {
+      for (const gradeWordList of Object.values(GRADE_WORDS)) {
+        const gradeWord = gradeWordList.find(w => w.word.toLowerCase() === wordLower);
+        if (gradeWord) {
+          definition = definition || gradeWord.definition;
+          exampleSentence = exampleSentence || gradeWord.example;
+          break;
+        }
+      }
+    }
+
+    return {
+      word: currentWord,
+      definition,
+      exampleSentence,
+    };
+  }, [getCurrentWord, wordBank.words]);
+
+  // Spelling hint system (only for Meadow mode with Wordle feedback)
+  const isMeadowMode = modeConfig.feedbackStyle === 'wordle';
+  const {
+    hint,
+    isLoading: hintLoading,
+    recordAttempt,
+    clearHint,
+  } = useSpellingHint({
+    attemptsBeforeHint: 2,
+    autoGenerate: isMeadowMode,
+  });
+
+  // Only use timer if mode has timer
+  const timer = useGameTimer(
+    modeConfig.hasTimer ? modeConfig.timePerWord : 999999,
+    () => {
+      if (gameState.status === 'playing' && modeConfig.hasTimer) {
+        handleTimeUp();
+      }
+    }
+  );
+
+  // Initialize game on mount
+  useEffect(() => {
+    const { words, wordsToIntroduce } = selectWordsForSessionDetailed(
+      wordBank.words,
+      modeConfig.maxWordsPerSession
+    );
+    if (words.length < 5) {
+      navigate('/');
+      return;
+    }
+    // Mark any newly introduced words (transitioning from "Available" to "Learning")
+    if (wordsToIntroduce.length > 0) {
+      markWordsAsIntroduced(wordsToIntroduce);
+    }
+    startGame(words, modeConfig);
+  }, [modeId]);
+
+  // Start timer when game starts (only for timed modes)
+  useEffect(() => {
+    if (gameState.status === 'playing' && !isPaused && modeConfig.hasTimer) {
+      timer.start();
+    } else {
+      timer.pause();
+    }
+  }, [gameState.status, isPaused, modeConfig.hasTimer]);
+
+  // Speak word when it changes
+  useEffect(() => {
+    if (gameState.status === 'playing' && ttsSupported) {
+      const currentWord = getCurrentWord();
+      if (currentWord) {
+        speak(currentWord);
+      }
+    }
+  }, [gameState.currentWordIndex, gameState.status]);
+
+  // Handle confetti and next word transition
+  useEffect(() => {
+    if (gameState.showConfetti && gameState.status === 'playing') {
+      if (modeConfig.hasTimer) {
+        timer.pause();
+      }
+
+      // After confetti, proceed to next word
+      const timeout = setTimeout(() => {
+        hideConfetti();
+        nextWord();
+        if (modeConfig.hasTimer) {
+          timer.reset();
+          timer.start();
+        }
+      }, 2000);
+
+      return () => clearTimeout(timeout);
+    }
+  }, [gameState.showConfetti]);
+
+  // Track life loss for animation (only for modes with lives)
+  useEffect(() => {
+    if (modeConfig.hasLives && gameState.lives < previousLives.current) {
+      setRecentlyLostLife(true);
+      if (modeConfig.hasTimer) {
+        timer.reset();
+        timer.start();
+      }
+
+      const timeout = setTimeout(() => setRecentlyLostLife(false), 500);
+      return () => clearTimeout(timeout);
+    }
+    previousLives.current = gameState.lives;
+  }, [gameState.lives, modeConfig.hasLives, modeConfig.hasTimer]);
+
+  // Track wrong attempts for hint generation (Meadow mode only)
+  useEffect(() => {
+    console.log('[GameScreen] Wrong attempts effect:', {
+      isMeadowMode,
+      wrongAttemptsLength: gameState.wrongAttempts.length,
+      previousCount: previousWrongAttemptsCount.current,
+    });
+    if (isMeadowMode && gameState.wrongAttempts.length > previousWrongAttemptsCount.current) {
+      const latestAttempt = gameState.wrongAttempts[gameState.wrongAttempts.length - 1];
+      const currentWord = getCurrentWord();
+      console.log('[GameScreen] New wrong attempt detected:', { latestAttempt, currentWord });
+      if (latestAttempt && currentWord) {
+        recordAttempt(latestAttempt.input, currentWord);
+      }
+    }
+    previousWrongAttemptsCount.current = gameState.wrongAttempts.length;
+  }, [gameState.wrongAttempts, isMeadowMode, getCurrentWord, recordAttempt]);
+
+  // Clear hint and reset context when moving to next word
+  useEffect(() => {
+    if (isMeadowMode) {
+      clearHint();
+      previousWrongAttemptsCount.current = 0;
+    }
+    // Reset context level for new word (applies to all modes)
+    resetContext();
+    // Reset wrong attempts tracking for context escalation
+    previousWrongAttemptsForContext.current = 0;
+    previousContextLevel.current = 'word';
+    // Reset recording tracker for new word
+    previousRecordedWrongAttempts.current = 0;
+  }, [gameState.currentWordIndex, isMeadowMode, clearHint, resetContext]);
+
+  // Speak hint when it appears (Meadow mode only)
+  useEffect(() => {
+    if (isMeadowMode && hint && ttsSupported) {
+      speak(hint);
+    }
+  }, [hint, isMeadowMode, ttsSupported, speak]);
+
+  // Auto-escalate context and speak after wrong attempts
+  useEffect(() => {
+    // Check if we have a new wrong attempt
+    if (gameState.wrongAttempts.length > previousWrongAttemptsForContext.current) {
+      // Escalate context level and speak the new pronunciation
+      if (canEscalate && currentWordData && ttsSupported) {
+        escalateContext();
+      }
+    }
+    previousWrongAttemptsForContext.current = gameState.wrongAttempts.length;
+  }, [gameState.wrongAttempts.length, canEscalate, escalateContext, currentWordData, ttsSupported]);
+
+  // Speak the escalated context after it changes (due to wrong attempt)
+  useEffect(() => {
+    // Only auto-speak when context level increases (not on reset or initial)
+    if (
+      contextLevel !== 'word' &&
+      contextLevel !== previousContextLevel.current &&
+      currentWordData &&
+      ttsSupported
+    ) {
+      const pronunciation = formatPronunciation(currentWordData);
+      speak(pronunciation);
+    }
+    previousContextLevel.current = contextLevel;
+  }, [contextLevel, currentWordData, ttsSupported, formatPronunciation, speak]);
+
+  // Record wrong attempts immediately to localStorage (for all modes)
+  useEffect(() => {
+    const currentWord = getCurrentWord();
+    if (!currentWord) return;
+
+    // Check if a new wrong attempt was added
+    if (gameState.wrongAttempts.length > previousRecordedWrongAttempts.current) {
+      const latestAttempt = gameState.wrongAttempts[gameState.wrongAttempts.length - 1];
+      if (latestAttempt) {
+        recordWordAttempt(currentWord, latestAttempt.input, false, modeId);
+      }
+    }
+    previousRecordedWrongAttempts.current = gameState.wrongAttempts.length;
+  }, [gameState.wrongAttempts.length, getCurrentWord, recordWordAttempt, modeId]);
+
+  // Record correct attempts immediately when word is completed
+  useEffect(() => {
+    if (gameState.completedWords.length > previousCompletedCount.current) {
+      const latestCompleted = gameState.completedWords[gameState.completedWords.length - 1];
+      if (latestCompleted) {
+        recordWordAttempt(
+          latestCompleted.word,
+          gameState.currentInput, // Record actual typed input
+          true,
+          modeId,
+          latestCompleted.timeMs
+        );
+      }
+    }
+    previousCompletedCount.current = gameState.completedWords.length;
+  }, [gameState.completedWords.length, gameState.currentInput, recordWordAttempt, modeId]);
+
+  // Handle game end
+  useEffect(() => {
+    if (gameState.status === 'won' || gameState.status === 'lost') {
+      timer.pause();
+      const result = getGameResult(modeId);
+      if (result) {
+        recordGame(result);
+      }
+
+      // Navigate to appropriate end screen based on mode
+      const timeout = setTimeout(() => {
+        if (modeId === 'meadow') {
+          // Meadow mode goes to practice complete screen
+          navigate('/practice-complete', { state: { result, mode: modeId } });
+        } else {
+          navigate(gameState.status === 'won' ? '/victory' : '/game-over', {
+            state: { result, mode: modeId },
+          });
+        }
+      }, gameState.status === 'lost' ? 2000 : 500);
+
+      return () => clearTimeout(timeout);
+    }
+  }, [gameState.status, modeId]);
+
+  const handleRepeat = useCallback(async () => {
+    const currentWord = getCurrentWord();
+    if (currentWord && ttsSupported) {
+      await speak(currentWord);
+    }
+  }, [getCurrentWord, speak, ttsSupported]);
+
+  const handleRepeatHint = useCallback(async () => {
+    if (hint && ttsSupported) {
+      await speak(hint);
+    }
+  }, [hint, speak, ttsSupported]);
+
+  // Handle "More Context" button click - escalate and speak
+  const handleContextRequest = useCallback(async () => {
+    if (!canEscalate || !currentWordData || !ttsSupported) return;
+
+    // Escalate first, then the useEffect will handle speaking
+    escalateContext();
+  }, [canEscalate, currentWordData, ttsSupported, escalateContext]);
+
+  const handleSubmit = useCallback(() => {
+    submitAnswer(modeConfig);
+  }, [submitAnswer, modeConfig]);
+
+  const handleSkip = useCallback(() => {
+    if (modeConfig.unlimitedAttempts) {
+      skipWord();
+    }
+  }, [skipWord, modeConfig.unlimitedAttempts]);
+
+  const togglePause = useCallback(() => {
+    setIsPaused(p => !p);
+  }, []);
+
+  const currentWord = getCurrentWord();
+  const isPlaying = gameState.status === 'playing' && !isPaused && !gameState.showConfetti;
+
+  if (!currentWord && gameState.status === 'idle') {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="text-xl text-gray-600">Loading {modeConfig.name}...</div>
+      </div>
+    );
+  }
+
+  // Render different canvas based on mode
+  const renderCanvas = () => {
+    if (modeConfig.theme === 'meadow') {
+      return <MeadowCanvas isActive={isPlaying} />;
+    }
+    // Savannah and Wildlands use GameCanvas
+    return (
+      <GameCanvas
+        timeRemaining={timer.timeRemaining}
+        maxTime={modeConfig.timePerWord}
+        isRunning={isPlaying}
+        gameOver={gameState.status === 'lost'}
+      />
+    );
+  };
+
+  return (
+    <div className="flex-1 p-4 max-w-6xl mx-auto w-full">
+      {/* Confetti */}
+      <ConfettiEffect show={gameState.showConfetti} />
+
+      {/* Top bar */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-4">
+          <Button
+            onClick={() => navigate('/')}
+            variant="secondary"
+            size="sm"
+            className="flex items-center gap-2"
+            preventFocusSteal
+          >
+            <Home size={18} />
+          </Button>
+
+          {/* Mode indicator */}
+          <span className="px-3 py-1 bg-white/80 rounded-full text-sm font-medium text-gray-700">
+            {modeConfig.name}
+          </span>
+
+          {modeConfig.hasTimer && (
+            <Button
+              onClick={togglePause}
+              variant="secondary"
+              size="sm"
+              className="flex items-center gap-2"
+              disabled={gameState.status !== 'playing'}
+              preventFocusSteal
+            >
+              {isPaused ? <Play size={18} /> : <Pause size={18} />}
+              {isPaused ? 'Resume' : 'Pause'}
+            </Button>
+          )}
+        </div>
+
+        {/* Lives display (only for modes with lives) */}
+        {modeConfig.hasLives && (
+          <LivesDisplay
+            currentLives={gameState.lives}
+            maxLives={gameState.maxLives}
+            recentlyLost={recentlyLostLife}
+          />
+        )}
+      </div>
+
+      {/* Timer (only for timed modes) */}
+      {modeConfig.hasTimer && (
+        <div className="mb-4">
+          <TimerDisplay timeRemaining={timer.timeRemaining} maxTime={modeConfig.timePerWord} />
+        </div>
+      )}
+
+      {/* Game canvas */}
+      <div className="mb-6">
+        {renderCanvas()}
+      </div>
+
+      {/* Main game area */}
+      <div className="flex gap-6">
+        {/* Input section */}
+        <div className="flex-1">
+          <div className="bg-white/90 rounded-xl p-6 shadow-lg">
+            {/* Word info */}
+            <div className="text-center mb-6">
+              <div className="text-gray-500 text-sm mb-1">
+                Word {gameState.currentWordIndex + 1} of {gameState.words.length}
+              </div>
+              <div className="text-lg text-gray-700">
+                {currentWord.length} letters
+              </div>
+            </div>
+
+            {/* Word input */}
+            <div className="mb-6">
+              <WordInput
+                wordLength={currentWord.length}
+                currentInput={gameState.currentInput}
+                wrongAttempts={gameState.wrongAttempts}
+                onInputChange={setInput}
+                onSubmit={handleSubmit}
+                disabled={!isPlaying}
+                feedbackStyle={modeConfig.feedbackStyle}
+                targetWord={modeConfig.feedbackStyle === 'wordle' ? currentWord : undefined}
+                hint={isMeadowMode ? hint : undefined}
+                hintLoading={isMeadowMode ? hintLoading : undefined}
+                onRepeatHint={isMeadowMode ? handleRepeatHint : undefined}
+              />
+            </div>
+
+            {/* Action buttons */}
+            <div className="flex justify-center gap-4">
+              <RepeatButton onRepeat={handleRepeat} disabled={!isPlaying} />
+
+              {/* Context button for progressive disclosure */}
+              <ContextButton
+                contextLevel={contextLevel}
+                onRequestContext={handleContextRequest}
+                disabled={!isPlaying}
+              />
+
+              {/* Skip button for Meadow mode */}
+              {modeConfig.unlimitedAttempts && (
+                <Button
+                  onClick={handleSkip}
+                  variant="secondary"
+                  size="sm"
+                  disabled={!isPlaying}
+                  className="flex items-center gap-2"
+                  preventFocusSteal
+                >
+                  <SkipForward size={18} />
+                  Skip Word
+                </Button>
+              )}
+            </div>
+
+            {/* TTS warning */}
+            {!ttsSupported && (
+              <p className="text-center text-amber-600 text-sm mt-4">
+                Text-to-speech not supported in this browser
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Sidebar */}
+        <div className="hidden md:block">
+          <CompletedWordsList
+            words={gameState.completedWords}
+            currentWordNumber={gameState.currentWordIndex + 1}
+            totalWords={gameState.words.length}
+          />
+        </div>
+      </div>
+
+      {/* Pause overlay (only for timed modes) */}
+      {isPaused && modeConfig.hasTimer && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-40">
+          <div className="bg-white rounded-xl p-8 text-center">
+            <h2 className="text-2xl font-bold text-gray-800 mb-4">Game Paused</h2>
+            <Button onClick={togglePause} variant="primary" size="lg" preventFocusSteal>
+              <Play size={24} className="mr-2" />
+              Resume Game
+            </Button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

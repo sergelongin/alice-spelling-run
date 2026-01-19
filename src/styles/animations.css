@@ -1,0 +1,352 @@
+/* Sprite Animations */
+@keyframes player-run {
+  from { background-position: 0 0; }
+  to { background-position: -512px 0; }
+}
+
+@keyframes lion-run {
+  from { background-position: 0 0; }
+  to { background-position: -640px 0; }
+}
+
+/* Player sprite with animation */
+.player-sprite {
+  width: 64px;
+  height: 64px;
+  background-size: 512px 64px;
+  animation: player-run 0.6s steps(8) infinite;
+  image-rendering: pixelated;
+}
+
+/* Lion sprite with animation */
+.lion-sprite {
+  width: 80px;
+  height: 80px;
+  background-size: 640px 80px;
+  animation: lion-run 0.5s steps(8) infinite;
+  image-rendering: pixelated;
+}
+
+/* Placeholder character animations using CSS */
+.player-placeholder {
+  width: 60px;
+  height: 60px;
+  position: relative;
+}
+
+.player-placeholder::before {
+  content: '';
+  position: absolute;
+  width: 40px;
+  height: 40px;
+  background: linear-gradient(135deg, #FFB6C1 0%, #FF69B4 100%);
+  border-radius: 50%;
+  top: 0;
+  left: 10px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.player-placeholder::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 8px;
+  height: 20px;
+  background: #333;
+  border-radius: 4px;
+  animation: leg-run 0.3s ease-in-out infinite alternate;
+}
+
+@keyframes leg-run {
+  0% { transform: translateX(-50%) rotate(-15deg); }
+  100% { transform: translateX(-50%) rotate(15deg); }
+}
+
+.lion-placeholder {
+  width: 80px;
+  height: 70px;
+  position: relative;
+}
+
+.lion-placeholder::before {
+  content: '';
+  position: absolute;
+  width: 50px;
+  height: 45px;
+  background: linear-gradient(135deg, #F5A623 0%, #D4860E 100%);
+  border-radius: 50%;
+  top: 5px;
+  left: 15px;
+  box-shadow: 0 2px 4px rgba(0,0,0,0.2);
+}
+
+.lion-placeholder::after {
+  content: '';
+  position: absolute;
+  width: 60px;
+  height: 60px;
+  background: radial-gradient(circle, #8B4513 0%, transparent 70%);
+  border-radius: 50%;
+  top: 0;
+  left: 10px;
+}
+
+/* Ground scrolling animation */
+@keyframes ground-scroll {
+  from { background-position: 0 0; }
+  to { background-position: -128px 0; }
+}
+
+.ground-scroll {
+  animation: ground-scroll 0.5s linear infinite;
+}
+
+/* Background parallax layers */
+@keyframes bg-scroll-slow {
+  from { background-position: 0 0; }
+  to { background-position: -1920px 0; }
+}
+
+@keyframes bg-scroll-medium {
+  from { background-position: 0 0; }
+  to { background-position: -960px 0; }
+}
+
+.parallax-far {
+  animation: bg-scroll-slow 60s linear infinite;
+}
+
+.parallax-mid {
+  animation: bg-scroll-medium 30s linear infinite;
+}
+
+/* Timer warning animations */
+@keyframes timer-pulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes timer-critical {
+  0%, 100% {
+    transform: scale(1);
+    color: #EF4444;
+  }
+  50% {
+    transform: scale(1.1);
+    color: #DC2626;
+  }
+}
+
+.timer-warning {
+  animation: timer-pulse 1s ease-in-out infinite;
+}
+
+.timer-critical {
+  animation: timer-critical 0.5s ease-in-out infinite;
+}
+
+/* Heart loss animation */
+@keyframes heart-break {
+  0% {
+    transform: scale(1);
+    opacity: 1;
+  }
+  50% {
+    transform: scale(1.3);
+  }
+  100% {
+    transform: scale(0);
+    opacity: 0;
+  }
+}
+
+.heart-breaking {
+  animation: heart-break 0.5s ease-out forwards;
+}
+
+/* Wrong answer shake */
+@keyframes input-shake {
+  0%, 100% { transform: translateX(0); }
+  10%, 30%, 50%, 70%, 90% { transform: translateX(-5px); }
+  20%, 40%, 60%, 80% { transform: translateX(5px); }
+}
+
+.input-shake {
+  animation: input-shake 0.5s ease-in-out;
+}
+
+/* Correct answer celebration */
+@keyframes correct-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+.correct-bounce {
+  animation: correct-bounce 0.5s ease-in-out;
+}
+
+/* Trophy shine effect */
+@keyframes trophy-shine {
+  0% {
+    filter: brightness(1);
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    filter: brightness(1.3);
+    transform: scale(1.1) rotate(5deg);
+  }
+  100% {
+    filter: brightness(1);
+    transform: scale(1) rotate(0deg);
+  }
+}
+
+.trophy-shine {
+  animation: trophy-shine 2s ease-in-out infinite;
+}
+
+/* Lion catching animation */
+@keyframes lion-pounce {
+  0% { transform: translateX(0) scale(1); }
+  50% { transform: translateX(-50px) scale(1.2); }
+  100% { transform: translateX(-100px) scale(1.5); }
+}
+
+.lion-pounce {
+  animation: lion-pounce 0.8s ease-in forwards;
+}
+
+/* Word Bank - Achievement badge glow */
+@keyframes badge-glow {
+  0%, 100% {
+    box-shadow: 0 0 5px rgba(251, 191, 36, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 15px rgba(251, 191, 36, 0.6), 0 0 25px rgba(251, 191, 36, 0.4);
+  }
+}
+
+.badge-glow {
+  animation: badge-glow 2s ease-in-out infinite;
+}
+
+/* Word Bank - Badge bounce in */
+@keyframes bounceIn {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+  70% {
+    transform: scale(0.9);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+
+.animate-bounceIn {
+  animation: bounceIn 0.3s ease-out;
+}
+
+/* Word Bank - Star sparkle */
+@keyframes sparkle {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1) rotate(0deg);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.2) rotate(180deg);
+  }
+}
+
+.star-sparkle {
+  animation: sparkle 2s ease-in-out infinite;
+}
+
+/* Word Bank - Progress bar fill */
+@keyframes progress-fill {
+  from {
+    width: 0%;
+  }
+}
+
+.progress-fill {
+  animation: progress-fill 1s ease-out;
+}
+
+/* Word Bank - Slide in from right */
+@keyframes slideInRight {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.slide-in-right {
+  animation: slideInRight 0.3s ease-out;
+}
+
+/* Word Bank - Fade in up */
+@keyframes fadeInUp {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.fade-in-up {
+  animation: fadeInUp 0.3s ease-out;
+}
+
+/* Word Bank - Pulse ring (for attention items) */
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0.7);
+  }
+  70% {
+    box-shadow: 0 0 0 10px rgba(251, 191, 36, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(251, 191, 36, 0);
+  }
+}
+
+.pulse-ring {
+  animation: pulse-ring 2s infinite;
+}
+
+/* Word Bank - Shimmer loading effect */
+@keyframes shimmer {
+  0% {
+    background-position: -200% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    rgba(255, 255, 255, 0) 0%,
+    rgba(255, 255, 255, 0.5) 50%,
+    rgba(255, 255, 255, 0) 100%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+}

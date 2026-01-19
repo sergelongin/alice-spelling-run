@@ -1,0 +1,133 @@
+@import './styles/animations.css';
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-savanna-light: #F5E6C8;
+  --color-savanna: #E8D4A8;
+  --color-savanna-dark: #C4A574;
+  --color-sky: #87CEEB;
+  --color-grass: #228B22;
+}
+
+body {
+  margin: 0;
+  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  background: linear-gradient(180deg, var(--color-sky) 0%, var(--color-savanna-light) 100%);
+  min-height: 100vh;
+}
+
+#root {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-savanna-light);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-savanna-dark);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #A0825A;
+}
+
+/* Focus styles for accessibility */
+*:focus-visible {
+  outline: 3px solid #3B82F6;
+  outline-offset: 2px;
+}
+
+/* Letter slot styles */
+.letter-slot {
+  @apply w-12 h-14 border-b-4 border-gray-400 flex items-center justify-center text-2xl font-bold uppercase transition-all duration-200;
+}
+
+.letter-slot.filled {
+  @apply border-blue-500;
+}
+
+.letter-slot.incorrect {
+  @apply bg-red-100 border-red-500 text-red-600;
+}
+
+.letter-slot.correct {
+  @apply bg-green-100 border-green-500 text-green-600;
+}
+
+/* Button base styles */
+.btn {
+  @apply px-6 py-3 rounded-lg font-semibold text-lg transition-all duration-200 transform;
+}
+
+.btn:hover {
+  @apply scale-105;
+}
+
+.btn:active {
+  @apply scale-95;
+}
+
+.btn-primary {
+  @apply bg-blue-500 text-white hover:bg-blue-600;
+}
+
+.btn-secondary {
+  @apply bg-gray-200 text-gray-800 hover:bg-gray-300;
+}
+
+.btn-danger {
+  @apply bg-red-500 text-white hover:bg-red-600;
+}
+
+.btn-success {
+  @apply bg-green-500 text-white hover:bg-green-600;
+}
+
+/* Card styles */
+.card {
+  @apply bg-white rounded-xl shadow-lg p-6;
+}
+
+/* Game canvas container */
+.game-canvas {
+  background: linear-gradient(
+    180deg,
+    #87CEEB 0%,
+    #87CEEB 40%,
+    #90EE90 40%,
+    #228B22 100%
+  );
+  position: relative;
+  overflow: hidden;
+}
+
+/* Ground texture overlay */
+.ground-overlay {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 60px;
+  background: repeating-linear-gradient(
+    90deg,
+    #228B22 0px,
+    #228B22 10px,
+    #1E7B1E 10px,
+    #1E7B1E 20px
+  );
+}

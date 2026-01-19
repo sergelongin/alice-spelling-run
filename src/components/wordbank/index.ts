@@ -1,0 +1,14 @@
+export { ChildWordBank } from './ChildWordBank';
+export { ParentWordBank } from './ParentWordBank';
+export { PinModal } from './PinModal';
+export { TodaysMissionCard } from './TodaysMissionCard';
+export { ProgressJourney } from './ProgressJourney';
+export { AchievementBadges } from './AchievementBadges';
+export { StarWordsShowcase } from './StarWordsShowcase';
+export { QuickStatsDashboard } from './QuickStatsDashboard';
+export { AttentionNeededAlert } from './AttentionNeededAlert';
+export { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';
+export { ErrorPatternAnalysis, getActivePatternCount } from './ErrorPatternAnalysis';
+export { WordManagementTable } from './WordManagementTable';
+export { RecommendationsPanel } from './RecommendationsPanel';
+export { LearningActivityChart } from './LearningActivityChart';
