@@ -5,6 +5,7 @@ export { TodaysMissionCard } from './TodaysMissionCard';
 export { ProgressJourney } from './ProgressJourney';
 export { AchievementBadges } from './AchievementBadges';
 export { StarWordsShowcase } from './StarWordsShowcase';
+export { AlmostThereSection } from './AlmostThereSection';
 export { QuickStatsDashboard } from './QuickStatsDashboard';
 export { AttentionNeededAlert } from './AttentionNeededAlert';
 export { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';

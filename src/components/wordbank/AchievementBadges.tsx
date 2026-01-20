@@ -3,6 +3,7 @@ import { Achievement } from '@/types/achievements';
 
 interface AchievementBadgesProps {
   achievements: Achievement[];
+  variant?: 'default' | 'compact';
 }
 
 interface BadgeModalProps {
@@ -62,7 +63,7 @@ function BadgeModal({ achievement, onClose }: BadgeModalProps) {
  * Earned badges glow, unearned are grayed out.
  * Shows highest tier of each achievement type.
  */
-export function AchievementBadges({ achievements }: AchievementBadgesProps) {
+export function AchievementBadges({ achievements, variant = 'default' }: AchievementBadgesProps) {
   const [selectedAchievement, setSelectedAchievement] = useState<Achievement | null>(null);
 
   // Group achievements by base type and show highest tier earned (or next tier to earn)
@@ -72,30 +73,38 @@ export function AchievementBadges({ achievements }: AchievementBadgesProps) {
     return null;
   }
 
+  const isCompact = variant === 'compact';
+
   return (
     <>
-      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
-        <h3 className="text-lg font-bold text-gray-800 mb-4 flex items-center gap-2">
+      <div className={`bg-white rounded-xl shadow-sm border border-gray-100 ${isCompact ? 'p-4' : 'p-6'}`}>
+        <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${isCompact ? 'text-base mb-3' : 'text-lg mb-4'}`}>
           <span>🏆</span>
           My Achievements
         </h3>
 
-        <div className="flex flex-wrap gap-4 justify-start">
+        <div className={isCompact
+          ? 'grid grid-cols-3 gap-2'
+          : 'flex flex-wrap gap-4 justify-start'
+        }>
           {displayAchievements.map(achievement => (
             <button
               key={achievement.id}
               onClick={() => setSelectedAchievement(achievement)}
-              className={`group flex flex-col items-center p-3 rounded-xl transition-all
+              className={`group relative flex flex-col items-center rounded-xl transition-all
                         hover:scale-110 hover:shadow-lg active:scale-100
+                        ${isCompact ? 'p-2' : 'p-3'}
                         ${achievement.isEarned
                           ? 'bg-gradient-to-br from-amber-50 to-orange-50 shadow-sm'
                           : 'bg-gray-50 opacity-50 hover:opacity-75'}`}
             >
-              <span className={`text-3xl mb-1 transition-transform group-hover:scale-110
+              <span className={`transition-transform group-hover:scale-110
+                              ${isCompact ? 'text-2xl mb-0.5' : 'text-3xl mb-1'}
                               ${achievement.isEarned ? 'drop-shadow-lg' : 'grayscale'}`}>
                 {achievement.icon}
               </span>
-              <span className={`text-xs font-medium text-center leading-tight max-w-[70px]
+              <span className={`font-medium text-center leading-tight
+                              ${isCompact ? 'text-[10px] max-w-[60px]' : 'text-xs max-w-[70px]'}
                               ${achievement.isEarned ? 'text-gray-700' : 'text-gray-400'}`}>
                 {achievement.name}
               </span>

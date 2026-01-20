@@ -97,9 +97,10 @@ export function TodaysMissionCard({
               onClick={onPractice}
               variant="secondary"
               className="w-full bg-white hover:bg-gray-50 text-gray-800 font-bold py-3 shadow-lg
-                       transform transition-all hover:scale-[1.02] active:scale-[0.98]"
+                       transform transition-all hover:scale-[1.02] active:scale-[0.98]
+                       flex items-center justify-center gap-2"
             >
-              <Play className="w-5 h-5 mr-2" />
+              <Play className="w-5 h-5" />
               {buttonText}
             </Button>
           </div>

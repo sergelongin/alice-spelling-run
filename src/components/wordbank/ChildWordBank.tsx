@@ -6,6 +6,7 @@ import { TodaysMissionCard } from './TodaysMissionCard';
 import { ProgressJourney } from './ProgressJourney';
 import { AchievementBadges } from './AchievementBadges';
 import { StarWordsShowcase } from './StarWordsShowcase';
+import { AlmostThereSection } from './AlmostThereSection';
 import { useGameContext } from '@/context/GameContext';
 import {
   calculateAchievements,
@@ -15,15 +16,11 @@ import {
 import { categorizeWordsByState, canIntroduceNewWords } from '@/utils/wordSelection';
 import { Word } from '@/types';
 
-interface ChildWordBankProps {
-  onRequestParentMode: () => void;
-}
-
 /**
  * Child Mode view of the Word Bank.
  * Maximum visual appeal, minimum text, game-like experience.
  */
-export function ChildWordBank({ onRequestParentMode }: ChildWordBankProps) {
+export function ChildWordBank() {
   const navigate = useNavigate();
   const {
     wordBank,
@@ -68,7 +65,7 @@ export function ChildWordBank({ onRequestParentMode }: ChildWordBankProps) {
 
   const handlePractice = () => {
     // Navigate to game with meadow mode (practice mode)
-    navigate('/play?mode=meadow');
+    navigate('/game', { state: { mode: 'meadow' } });
   };
 
   const handleWordClick = (word: Word) => {
@@ -76,7 +73,7 @@ export function ChildWordBank({ onRequestParentMode }: ChildWordBankProps) {
   };
 
   return (
-    <div className="flex-1 p-4 md:p-8 max-w-2xl mx-auto w-full">
+    <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div className="flex items-center gap-3">
@@ -94,60 +91,80 @@ export function ChildWordBank({ onRequestParentMode }: ChildWordBankProps) {
           </h1>
         </div>
 
-        {/* Parent Mode toggle */}
+        {/* Parent Dashboard link */}
         <button
-          onClick={onRequestParentMode}
+          onClick={() => navigate('/parent-dashboard')}
           className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200
                    text-gray-600 hover:text-gray-800 transition-colors text-sm font-medium"
         >
           <Users size={18} />
-          <span className="hidden sm:inline">Parent Mode</span>
+          <span className="hidden sm:inline">Parent Dashboard</span>
         </button>
       </div>
 
-      {/* Main content */}
-      <div className="space-y-6">
-        {/* Today's Mission Card */}
-        <TodaysMissionCard
-          dueWordCount={dueWordCount}
-          canIntroduceNew={canIntroduce}
-          masteredCount={wordStates.mastered.length}
-          totalActiveWords={activeWords.length}
-          onPractice={handlePractice}
-        />
+      {/* Two-column layout */}
+      <div className="flex flex-col md:flex-row gap-6">
+        {/* Main content - left side */}
+        <div className="flex-1 space-y-6">
+          {/* Today's Mission Card */}
+          <TodaysMissionCard
+            dueWordCount={dueWordCount}
+            canIntroduceNew={canIntroduce}
+            masteredCount={wordStates.mastered.length}
+            totalActiveWords={activeWords.length}
+            onPractice={handlePractice}
+          />
 
-        {/* Progress Journey */}
-        <ProgressJourney
-          words={wordBank.words}
-          onWordClick={handleWordClick}
-        />
-
-        {/* Achievement Badges */}
-        <AchievementBadges achievements={achievements} />
-
-        {/* Star Words Showcase */}
-        {recentlyMastered.length > 0 && (
-          <StarWordsShowcase words={recentlyMastered} />
-        )}
-
-        {/* Empty state */}
-        {activeWords.length === 0 && (
-          <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 text-center">
-            <div className="text-5xl mb-4">📚</div>
-            <h3 className="text-lg font-bold text-gray-800 mb-2">No words yet!</h3>
-            <p className="text-gray-500 mb-4">
-              Ask a parent to add some words for you to practice.
-            </p>
-            <Button
-              onClick={onRequestParentMode}
-              variant="primary"
-              className="inline-flex items-center gap-2"
-            >
-              <Users size={18} />
-              Switch to Parent Mode
-            </Button>
+          {/* Achievement Badges - mobile only */}
+          <div className="md:hidden">
+            <AchievementBadges achievements={achievements} />
           </div>
-        )}
+
+          {/* Almost There Section - positive framing for struggling words */}
+          <AlmostThereSection words={wordBank.words} />
+
+          {/* Progress Journey */}
+          <ProgressJourney
+            words={wordBank.words}
+            onWordClick={handleWordClick}
+          />
+
+          {/* Star Words Showcase - mobile only */}
+          {recentlyMastered.length > 0 && (
+            <div className="md:hidden">
+              <StarWordsShowcase words={recentlyMastered} />
+            </div>
+          )}
+
+          {/* Empty state */}
+          {activeWords.length === 0 && (
+            <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 text-center">
+              <div className="text-5xl mb-4">📚</div>
+              <h3 className="text-lg font-bold text-gray-800 mb-2">No words yet!</h3>
+              <p className="text-gray-500 mb-4">
+                Ask a parent to add some words for you to practice.
+              </p>
+              <Button
+                onClick={() => navigate('/parent-dashboard')}
+                variant="primary"
+                className="inline-flex items-center gap-2"
+              >
+                <Users size={18} />
+                Go to Parent Dashboard
+              </Button>
+            </div>
+          )}
+        </div>
+
+        {/* Sidebar - desktop only */}
+        <aside className="hidden md:block w-72 flex-shrink-0">
+          <div className="sticky top-8 space-y-6">
+            <AchievementBadges achievements={achievements} variant="compact" />
+            {recentlyMastered.length > 0 && (
+              <StarWordsShowcase words={recentlyMastered} variant="sidebar" />
+            )}
+          </div>
+        </aside>
       </div>
 
       {/* Word detail modal */}
