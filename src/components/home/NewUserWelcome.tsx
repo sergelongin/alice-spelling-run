@@ -55,7 +55,7 @@ export function NewUserWelcome() {
         </div>
 
         {/* Calibration CTA */}
-        <div className="text-center mb-6">
+        <div className="text-center mb-6 w-full max-w-md flex flex-col items-center">
           <p className="text-gray-600 text-sm mb-4">
             Let's discover your spelling level so we can pick the perfect words for you!
           </p>

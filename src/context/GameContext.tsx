@@ -52,9 +52,10 @@ interface GameContextValue {
 
 const GameContext = createContext<GameContextValue | null>(null);
 
-const WORD_BANK_KEY = 'alice-spelling-run-word-bank';
-const STATISTICS_KEY = 'alice-spelling-run-statistics';
-const CALIBRATION_KEY = 'alice-spelling-run-calibration';
+// Dynamic storage keys based on child ID for data isolation
+const getWordBankKey = (childId: string) => `alice-spelling-run-word-bank-${childId}`;
+const getStatisticsKey = (childId: string) => `alice-spelling-run-statistics-${childId}`;
+const getCalibrationKey = (childId: string) => `alice-spelling-run-calibration-${childId}`;
 
 const initialWordBank: WordBank = {
   words: [],
@@ -80,19 +81,25 @@ const getTodayDateString = (): string => {
   return new Date().toISOString().split('T')[0];
 };
 
-export function GameProvider({ children }: { children: React.ReactNode }) {
+interface GameProviderProps {
+  children: React.ReactNode;
+  childId: string;  // Required - must have active child to use GameProvider
+}
+
+export function GameProvider({ children, childId }: GameProviderProps) {
+  // Use child-specific localStorage keys for data isolation
   const [wordBank, setWordBank] = useLocalStorage<WordBank>(
-    WORD_BANK_KEY,
+    getWordBankKey(childId),
     initialWordBank
   );
 
   const [statistics, setStatistics] = useLocalStorage<GameStatistics>(
-    STATISTICS_KEY,
+    getStatisticsKey(childId),
     createInitialStatistics()
   );
 
   const [calibration, setCalibration] = useLocalStorage<StoredCalibration>(
-    CALIBRATION_KEY,
+    getCalibrationKey(childId),
     DEFAULT_STORED_CALIBRATION
   );
 

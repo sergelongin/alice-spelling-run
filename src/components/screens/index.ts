@@ -8,3 +8,16 @@ export { PracticeCompleteScreen } from './PracticeCompleteScreen';
 export { WildlandsHubScreen } from './WildlandsHubScreen';
 export { LeaderboardScreen } from './LeaderboardScreen';
 export { CalibrationScreen } from './CalibrationScreen';
+
+// Auth screens
+export { LoginScreen } from './LoginScreen';
+export { SignupScreen } from './SignupScreen';
+export { ChildSetupScreen } from './ChildSetupScreen';
+
+// Profile screens
+export { ProfileSelectionScreen } from './ProfileSelectionScreen';
+export { ManageProfilesScreen } from './ManageProfilesScreen';
+
+// Parent screens
+export { ParentDashboardScreen } from './ParentDashboardScreen';
+export { ChildDetailScreen } from './ChildDetailScreen';

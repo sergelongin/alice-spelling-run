@@ -32,11 +32,11 @@ export function HomeCharacterScene({
         <div className="relative">
           <PlayerSprite isRunning={false} />
 
-          {/* Speech bubble */}
+          {/* Speech bubble - positioned to the left of Alice */}
           {showSpeechBubble && speechText && (
-            <div className="absolute -top-16 -right-4 bg-white rounded-2xl px-4 py-2 shadow-lg border-2 border-amber-200 max-w-[180px] animate-fade-in">
-              {/* Speech bubble tail */}
-              <div className="absolute -bottom-2 left-8 w-4 h-4 bg-white border-r-2 border-b-2 border-amber-200 transform rotate-45" />
+            <div className="absolute -top-12 right-full mr-2 bg-white rounded-2xl px-4 py-2 shadow-lg border-2 border-amber-200 whitespace-nowrap animate-fade-in">
+              {/* Speech bubble tail pointing right */}
+              <div className="absolute top-4 -right-2 w-4 h-4 bg-white border-r-2 border-t-2 border-amber-200 transform rotate-45" />
               <p className="text-sm text-gray-700 font-medium relative z-10">
                 {speechText}
               </p>
