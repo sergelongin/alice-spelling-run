@@ -22,6 +22,7 @@ import type {
   SignInData,
   AddChildData,
 } from '@/types/auth';
+import { revokeParentDashboardAccess } from '@/hooks/useParentDashboardAccess';
 
 const ACTIVE_CHILD_KEY = 'alice-spelling-run-active-child';
 const SESSION_PROFILE_SELECTED_KEY = 'alice-spelling-run-profile-selected';
@@ -507,6 +508,9 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
   // Select profile (Netflix-style: sets active child AND marks as selected this session)
   const selectProfile = useCallback((childId: string) => {
+    // Revoke parent dashboard access when switching to child mode
+    revokeParentDashboardAccess();
+
     setCachedActiveChildId(childId);
     setProfileSelectedThisSession(true);
 
@@ -519,6 +523,9 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
   // Clear profile selection (for "Switch Profile" functionality)
   const clearProfileSelection = useCallback(() => {
+    // Revoke parent dashboard access when clearing profile selection
+    revokeParentDashboardAccess();
+
     setProfileSelectedThisSession(false);
     // Clear localStorage active child so the fallback check also returns false
     localStorage.removeItem(ACTIVE_CHILD_KEY);

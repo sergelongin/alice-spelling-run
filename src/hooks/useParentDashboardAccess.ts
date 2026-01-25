@@ -18,7 +18,15 @@ interface UseParentDashboardAccessReturn {
 }
 
 const PIN_STORAGE_KEY = 'alice-spelling-run-parent-pin';
-const SESSION_ACCESS_KEY = 'alice-spelling-run-parent-dashboard-access';
+export const SESSION_ACCESS_KEY = 'alice-spelling-run-parent-dashboard-access';
+
+/**
+ * Revoke parent dashboard access from non-component code.
+ * Call this when transitioning from parent mode to child mode.
+ */
+export function revokeParentDashboardAccess(): void {
+  sessionStorage.removeItem(SESSION_ACCESS_KEY);
+}
 
 /**
  * Hook for managing Parent Dashboard access with PIN protection.

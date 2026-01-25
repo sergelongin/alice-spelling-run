@@ -7,6 +7,6 @@ export { useSpellingHint } from './useSpellingHint';
 export { useCalibration } from './useCalibration';
 export { useWordContext } from './useWordContext';
 export { useWordBankMode } from './useWordBankMode';
-export { useParentDashboardAccess } from './useParentDashboardAccess';
+export { useParentDashboardAccess, revokeParentDashboardAccess } from './useParentDashboardAccess';
 export type { ContextLevel } from './useWordContext';
 export type { WordBankMode } from './useWordBankMode';

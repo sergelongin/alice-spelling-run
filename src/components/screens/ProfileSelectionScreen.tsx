@@ -1,19 +1,70 @@
-import { useNavigate, Link } from 'react-router-dom';
-import { Settings } from 'lucide-react';
+import { useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
-import { ProfileCard, AddProfileCard } from '@/components/profiles';
+import { useParentDashboardAccess } from '@/hooks';
+import { ProfileCard, ParentsCard } from '@/components/profiles';
+import { PinModal } from '@/components/wordbank';
 
 export function ProfileSelectionScreen() {
   const { children, activeChild, selectProfile } = useAuth();
   const navigate = useNavigate();
+  const {
+    isAuthorized,
+    isPinModalOpen,
+    pinError,
+    isCreatingPin,
+    requestAccess,
+    verifyPin,
+    createPin,
+    closePinModal,
+    revokeAccess,
+  } = useParentDashboardAccess();
+
+  // Revoke parent dashboard access when returning to profile selection
+  // This ensures users must re-enter PIN when navigating from parent mode back to profiles
+  useEffect(() => {
+    revokeAccess();
+  }, [revokeAccess]);
+
+  // Navigate to parent dashboard after successful PIN verification
+  useEffect(() => {
+    if (isAuthorized && isPinModalOpen === false) {
+      // Only navigate if we just completed PIN verification (modal was open)
+      // Check if we came from clicking the Parents card
+      const pendingNavigation = sessionStorage.getItem('pending-parent-dashboard-nav');
+      if (pendingNavigation === 'true') {
+        sessionStorage.removeItem('pending-parent-dashboard-nav');
+        navigate('/parent-dashboard');
+      }
+    }
+  }, [isAuthorized, isPinModalOpen, navigate]);
 
   const handleSelectProfile = (childId: string) => {
     selectProfile(childId);
     navigate('/', { replace: true });
   };
 
-  const handleAddProfile = () => {
-    navigate('/setup-child');
+  const handleParentDashboard = () => {
+    if (isAuthorized) {
+      navigate('/parent-dashboard');
+    } else {
+      // Mark that we want to navigate after PIN verification
+      sessionStorage.setItem('pending-parent-dashboard-nav', 'true');
+      requestAccess();
+    }
+  };
+
+  const handlePinSubmit = (pin: string) => {
+    if (isCreatingPin) {
+      createPin(pin);
+    } else {
+      verifyPin(pin);
+    }
+  };
+
+  const handlePinClose = () => {
+    sessionStorage.removeItem('pending-parent-dashboard-nav');
+    closePinModal();
   };
 
   return (
@@ -36,21 +87,19 @@ export function ProfileSelectionScreen() {
                 isSelected={activeChild?.id === child.id}
               />
             ))}
-            <AddProfileCard onClick={handleAddProfile} />
+            <ParentsCard onClick={handleParentDashboard} />
           </div>
         </div>
       </div>
 
-      {/* Footer */}
-      <div className="p-6 flex justify-center">
-        <Link
-          to="/profiles/manage"
-          className="flex items-center gap-2 px-4 py-2 text-gray-400 hover:text-white border border-gray-600 hover:border-gray-500 rounded-lg transition-colors"
-        >
-          <Settings size={18} />
-          <span>Manage Profiles</span>
-        </Link>
-      </div>
+      {/* PIN Modal */}
+      <PinModal
+        isOpen={isPinModalOpen}
+        onClose={handlePinClose}
+        onSubmit={handlePinSubmit}
+        isCreating={isCreatingPin}
+        error={pinError}
+      />
     </div>
   );
 }
