@@ -4,11 +4,13 @@ Alice Spelling Run features three distinct game modes, each designed for differe
 
 ## Mode Overview
 
-| Mode | Description | Target Use Case |
-|------|-------------|-----------------|
-| **Meadow Mode** | Relaxed practice | Learning new words, building confidence |
-| **Savannah Run** | Timed challenge | Testing mastery, earning trophies |
-| **Wildlands League** | Competitive | Leaderboards, daily challenges (planned) |
+| Internal ID | User-Facing Name | Description | Target Use Case |
+|-------------|------------------|-------------|-----------------|
+| `meadow` | **Chill Mode** | Relaxed practice | Learning new words, building confidence |
+| `savannah` | **Chase Mode** | Timed challenge | Testing mastery, earning trophies |
+| `wildlands` | **Wildlands League** | Competitive | Leaderboards, daily challenges (planned) |
+
+**Note:** The internal IDs (`meadow`, `savannah`) use thematic names while user-facing names are simpler for children.
 
 ---
 
@@ -180,15 +182,51 @@ Asynchronous multiplayer mode with leaderboards and daily challenges.
 
 ## Mode Selection
 
-Modes are selected from the Home Screen and passed via URL parameter:
+### Home Screen Layout
+
+The home screen uses a simplified, goal-oriented design with 5 elements max:
 
 ```
-/game?mode=meadow
-/game?mode=savannah
-/game?mode=wildlands
+┌─────────────────────────────────────┐
+│        [Character Scene]            │
+│     "Ready to play? Let's go!"      │
+├─────────────────────────────────────┤
+│  ┌─────────────────────────────┐    │
+│  │ 22 words waiting for you!   │    │  ← GREEN hero card (Chill Mode)
+│  │    "Let's practice!"        │    │
+│  │      [ Practice Now ]       │    │
+│  └─────────────────────────────┘    │
+├─────────────────────────────────────┤
+│  ⚡ Chase Mode - Race the lion!     │  ← Optional secondary action
+├─────────────────────────────────────┤
+│  🔥 1/3 days → Streak Starter       │  ← Goal-oriented progress
+│  📚 0/10 → Word Learner             │
+└─────────────────────────────────────┘
 ```
 
-The `GameScreen` component reads the mode parameter and applies the appropriate `GameModeConfig`.
+**Design Decisions:**
+- **Hero card is green** (matches Chill Mode styling) and launches Meadow Mode directly
+- **No separate Chill Mode button** (hero card IS the Chill Mode launcher)
+- **Chase Mode shown as secondary option** (orange button below hero)
+- **Progress shows goals, not abstract numbers** (e.g., "1/3 days → Streak Starter" instead of "1 day streak")
+- **Streak row hidden when streak = 0** (cleaner look for new users)
+
+### Navigation
+
+Modes are passed via React Router state:
+
+```typescript
+// From hero card "Practice Now" button
+navigate('/game', { state: { mode: 'meadow' } });
+
+// From Chase Mode button
+navigate('/game', { state: { mode: 'savannah' } });
+
+// For Wildlands (when implemented)
+navigate('/wildlands');
+```
+
+The `GameScreen` component reads the mode from location state and applies the appropriate `GameModeConfig`.
 
 ---
 

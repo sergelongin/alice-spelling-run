@@ -94,9 +94,16 @@ Six screens via React Router: Home, WordBank, Game, Victory, GameOver, Statistic
 5 tiers based on remaining lives: Platinum (5), Gold (4), Silver (3), Bronze (2), Participant (1).
 
 ### Game Modes
-- **Meadow Mode** (Practice): No timer/lives, Wordle feedback, AI hints, progressive context disclosure
-- **Savannah Run**: Timed chase, 5 lives, trophy system
+- **Chill Mode** (`meadow`): No timer/lives, Wordle feedback, AI hints, progressive context disclosure
+- **Chase Mode** (`savannah`): Timed chase, 5 lives, trophy system
 - **Wildlands League** (Planned): Competitive mode with leaderboards
+
+### Home Screen Design
+Simplified layout with goal-oriented progress:
+- **Hero card** (green): Primary CTA, launches Chill Mode directly
+- **Chase Mode button**: Secondary option for challenge mode
+- **MotivationalProgress**: Shows "🔥 1/3 days → Streak Starter" instead of abstract "1 day streak"
+- Streak row hidden when streak = 0
 
 ### AI Features
 - **LLM Spelling Hints**: Multi-provider support (OpenAI, Anthropic, Groq) via `src/services/aiProvider.ts`
@@ -187,3 +194,63 @@ See `/Documentation/` for detailed specs:
 
 ### Word Data
 ~665 grade-level words (grades 3-6) with definitions and example sentences in `src/data/gradeWords/`.
+
+### QA Test Accounts
+
+Test accounts for use with `agent-browser` during development/QA. All accounts use the Supabase project `gibingvfmrmelpchlwzn`.
+
+> **WARNING:** Never create test accounts via `POST /auth/v1/signup` — it sends confirmation emails that bounce on fake addresses and flags the Supabase project for high bounce rate. Always use the admin API script below.
+
+**Creating/recreating accounts:**
+```bash
+./scripts/create-test-accounts.sh
+```
+This script uses `POST /auth/v1/admin/users` with the service_role key to create pre-confirmed users without sending any email. It's idempotent (deletes existing accounts first).
+
+| Account | Email | Password | Purpose |
+|---------|-------|----------|---------|
+| New Signup | `claude-qa-test@testmail.dev` | `TestSpelling2024x` | Fresh user, no practice data. Tests onboarding, empty states, calibration flow. |
+| Returning User | `claude-qa-returning@testmail.dev` | `TestSpelling2024x` | User with practice history. Tests goal progress, stats, achievements, mastery. |
+
+**Testing with agent-browser:**
+
+```bash
+# 1. Start dev server
+npm run dev
+
+# 2. Open browser and sign in
+agent-browser navigate http://localhost:5173
+agent-browser fill "input[name=email]" "claude-qa-returning@testmail.dev"
+agent-browser fill "input[type=password]" "TestSpelling2024x"
+agent-browser click "button:has-text('Sign In')"
+
+# 3. Select child profile (after login)
+# Use `agent-browser snapshot -i` to find the profile button ref
+
+# 4. Seed practice data (required each new browser session for Returning User)
+agent-browser eval "$(cat scripts/seed-returning-user.js)"
+agent-browser reload
+
+# 5. Take screenshots
+agent-browser screenshot qa-screenshots/test.png --full
+agent-browser snapshot  # Accessibility tree for AI
+```
+
+**Important — localStorage seeding:**
+Game data (word bank, statistics) is stored in localStorage, not Supabase. Each new `agent-browser` session starts with empty localStorage. For the "Returning User" account, you **must run the seed script** after login + onboarding to populate practice data:
+
+```bash
+agent-browser eval "$(cat scripts/seed-returning-user.js)"
+agent-browser reload  # Required for React to pick up the changes
+```
+
+The seed script (`scripts/seed-returning-user.js`) creates:
+- 30 words with varying mastery (8 mastered, 10 reviewing, 12 learning)
+- 5 words due for review today
+- 13 games played, 11 wins, 4-day streak
+- 2 earned achievements
+
+**Notes:**
+- Screenshots saved to `qa-screenshots/` (gitignored)
+- Use `agent-browser set viewport 390 844` for mobile testing
+- Use `agent-browser close` to end the session

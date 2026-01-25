@@ -24,7 +24,8 @@ For implementation history and detailed phase planning, see [Plans/implementatio
 
 ### Key Features
 
-- **Three Game Modes**: Meadow (practice), Savannah Run (challenge), Wildlands League (competitive)
+- **Two Game Modes**: Chill Mode (practice) and Chase Mode (challenge), with Wildlands League (competitive) planned
+- **Simplified Home Screen**: Goal-oriented progress display (e.g., "1/3 days → Streak Starter") instead of abstract numbers
 - **665+ Grade-Level Words**: Curated word lists for grades 3-6 with definitions and example sentences
 - **Spaced Repetition**: Words are gradually introduced and reviewed based on learning science
 - **AI-Powered Hints**: LLM integration for contextual spelling help

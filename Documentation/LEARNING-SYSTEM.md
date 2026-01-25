@@ -170,7 +170,24 @@ The algorithm returns a `WordSelectionResult` containing:
 
 ## Visual Indicators
 
-In the Word Bank screen, words display their state with color coding:
+### Home Screen Progress
+
+The `MotivationalProgress` component displays goal-oriented progress:
+
+| Element | Display | Purpose |
+|---------|---------|---------|
+| Streak progress | "🔥 1/3 days → Streak Starter" | Shows days until next streak badge |
+| Mastery progress | "📚 0/10 → Word Learner" | Shows words until next mastery badge |
+
+**Design principle:** Show "what you're working toward" not "what you have."
+
+- Streak row hidden when streak = 0 (cleaner look)
+- All badges earned shows celebration message
+- Tappable to navigate to achievements view
+
+### Word Bank Screen
+
+Words display their state with color coding:
 
 | State | Color | Description |
 |-------|-------|-------------|

@@ -129,3 +129,76 @@ function Modal({ isOpen, children }) {
 ```
 
 **Note:** This works because Modal has NO hooks. If you add hooks, move the early return after them.
+
+---
+
+## UI Design Patterns
+
+### Goal-Oriented Progress Display
+
+Instead of showing raw statistics, display progress toward meaningful goals:
+
+```typescript
+// ❌ Abstract numbers (user asks "why should I care?")
+<StreakBadge streak={1} />  // "1 day streak - Great start!"
+<ProgressBar mastered={0} reviewing={0} learning={22} />
+
+// ✅ Goal-oriented (user sees the reward)
+<MotivationalProgress
+  streak={1}
+  nextStreakAchievement={{ name: 'Streak Starter', goal: 3 }}
+/>
+// Shows: "🔥 1/3 days → Streak Starter"
+```
+
+**Key principle:** Every metric should answer "what am I working toward?"
+
+### Component Consolidation
+
+When multiple components serve similar purposes, consolidate:
+
+```
+Before: 8 competing elements
+- Character scene
+- Streak badge
+- Hero mission card
+- Chill Mode button
+- Chase Mode button
+- Next badge teaser
+- Recent mastery badge
+- Progress bar
+
+After: 5 focused elements
+- Character scene
+- Hero card (primary CTA, launches Chill Mode)
+- Chase Mode button (secondary option)
+- Goal-oriented progress (combines streak + badges)
+```
+
+**Pattern:** Primary action as hero card, secondary actions as smaller buttons, progress as unified view.
+
+### Color Consistency
+
+Match component colors to their actions:
+- Hero card launches Chill Mode → Use Chill Mode's green gradient
+- Chase Mode button → Use Chase Mode's orange gradient
+
+```typescript
+// Hero card gradient matches mode it launches
+gradient: 'from-green-500 via-emerald-500 to-teal-500'  // Chill Mode green
+```
+
+### Conditional Visibility
+
+Hide elements when they provide no value:
+
+```typescript
+// Hide streak row when streak = 0 (no value to user)
+{streak > 0 && nextStreakAchievement && (
+  <StreakRow />
+)}
+
+// Show celebration when all badges earned
+{allBadgesEarned && (
+  <CelebrationMessage />
+)}
