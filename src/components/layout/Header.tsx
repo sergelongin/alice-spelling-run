@@ -52,9 +52,10 @@ export function Header() {
         <nav className="flex items-center justify-between">
           <Link
             to="/"
-            className="text-xl font-bold text-gray-800 hover:text-blue-600 transition-colors"
+            className="font-bold text-gray-800 hover:text-blue-600 transition-colors"
           >
-            Alice Spelling Run
+            <span className="lg:hidden text-lg">Alice</span>
+            <span className="hidden lg:inline text-xl">Alice Spelling Run</span>
           </Link>
 
           <div className="flex items-center gap-2">
@@ -63,38 +64,41 @@ export function Header() {
               <>
                 <Link
                   to="/"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  title="Home"
+                  className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg transition-colors ${
                     isActive('/')
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <Home size={20} />
-                  <span className="hidden sm:inline">Home</span>
+                  <span className="hidden lg:inline">Home</span>
                 </Link>
 
                 <Link
                   to="/word-bank"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  title="Word Bank"
+                  className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg transition-colors ${
                     isActive('/word-bank')
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <BookOpen size={20} />
-                  <span className="hidden sm:inline">Word Bank</span>
+                  <span className="hidden lg:inline">Word Bank</span>
                 </Link>
 
                 <Link
                   to="/statistics"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  title="Statistics"
+                  className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg transition-colors ${
                     isActive('/statistics')
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <BarChart3 size={20} />
-                  <span className="hidden sm:inline">Stats</span>
+                  <span className="hidden lg:inline">Stats</span>
                 </Link>
               </>
             )}
@@ -104,22 +108,24 @@ export function Header() {
               <>
                 <Link
                   to="/"
-                  className="flex items-center gap-2 px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
+                  title="Back to App"
+                  className="flex items-center gap-2 px-3 lg:px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 >
                   <Home size={20} />
-                  <span className="hidden sm:inline">Back to App</span>
+                  <span className="hidden lg:inline">Back to App</span>
                 </Link>
 
                 <Link
                   to="/admin/audio"
-                  className={`flex items-center gap-2 px-4 py-2 rounded-lg transition-colors ${
+                  title="Audio"
+                  className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg transition-colors ${
                     isActive('/admin/audio')
                       ? 'bg-purple-100 text-purple-600'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
                 >
                   <Volume2 size={20} />
-                  <span className="hidden sm:inline">Audio</span>
+                  <span className="hidden lg:inline">Audio</span>
                 </Link>
               </>
             )}
@@ -129,11 +135,11 @@ export function Header() {
               {!isAdminRoute && (
                 <Link
                   to="/admin/audio"
-                  className="flex items-center gap-2 px-4 py-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
                   title="Admin"
+                  className="flex items-center gap-2 px-3 lg:px-4 py-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
                 >
                   <Volume2 size={20} />
-                  <span className="hidden sm:inline">Admin</span>
+                  <span className="hidden lg:inline">Admin</span>
                 </Link>
               )}
             </SuperAdminOnly>
@@ -153,7 +159,7 @@ export function Header() {
                   gradeLevel={activeChild.grade_level}
                   size="sm"
                 />
-                <span className="text-sm font-medium text-gray-700 truncate max-w-[80px] hidden sm:inline">
+                <span className="text-sm font-medium text-gray-700 truncate max-w-[80px] hidden lg:inline">
                   {activeChild.name}
                 </span>
               </button>
@@ -169,7 +175,7 @@ export function Header() {
                   <div className="w-7 h-7 bg-blue-100 text-blue-600 rounded-full flex items-center justify-center">
                     <User size={16} />
                   </div>
-                  <span className="hidden sm:inline text-sm font-medium truncate max-w-[100px]">
+                  <span className="hidden lg:inline text-sm font-medium truncate max-w-[100px]">
                     {displayName}
                   </span>
                   <ChevronDown
@@ -210,10 +216,10 @@ export function Header() {
                         Switch Profile
                       </button>
                     )}
-                    {/* Manage Profiles option for parents with children */}
+                    {/* Manage Profiles option for parents with children - redirects to parent dashboard */}
                     {isParent && hasChildren && (
                       <Link
-                        to="/profiles/manage"
+                        to="/parent-dashboard"
                         onClick={() => setShowUserMenu(false)}
                         className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
                       >
