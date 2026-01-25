@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Edit2 } from 'lucide-react';
+import { ArrowLeft, Download, Edit2, Trash2 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useParentDashboardAccess } from '@/hooks';
 import { PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
-import { ProfileAvatar } from '@/components/profiles';
+import { ProfileAvatar, EditProfileModal, DeleteConfirmDialog } from '@/components/profiles';
 import { ChildSwitcher } from '@/components/parent/ChildSwitcher';
 import {
   QuickStatsDashboard,
@@ -51,6 +51,8 @@ export function ChildDetailScreen() {
   } = useParentDashboardAccess();
 
   const [expandedPanel, setExpandedPanel] = useState<'struggling' | 'patterns' | null>('patterns');
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
 
   // Find the current child
   const currentChild = useMemo(
@@ -233,13 +235,22 @@ export function ChildDetailScreen() {
           </div>
           <div className="flex items-center gap-2">
             <Button
-              onClick={() => navigate('/profiles/manage')}
+              onClick={() => setShowEditModal(true)}
               variant="secondary"
               size="sm"
               className="flex items-center gap-2"
             >
               <Edit2 size={16} />
               Edit
+            </Button>
+            <Button
+              onClick={() => setShowDeleteDialog(true)}
+              variant="secondary"
+              size="sm"
+              className="flex items-center gap-2 text-red-600 hover:text-red-700"
+            >
+              <Trash2 size={16} />
+              Delete
             </Button>
             <Button
               onClick={handleExport}
@@ -318,6 +329,27 @@ export function ChildDetailScreen() {
           />
         )}
       </div>
+
+      {/* Edit Profile Modal */}
+      {showEditModal && currentChild && (
+        <EditProfileModal
+          child={currentChild}
+          onClose={() => setShowEditModal(false)}
+          onSaved={() => setShowEditModal(false)}
+        />
+      )}
+
+      {/* Delete Confirm Dialog */}
+      {showDeleteDialog && currentChild && (
+        <DeleteConfirmDialog
+          child={currentChild}
+          onClose={() => setShowDeleteDialog(false)}
+          onDeleted={() => {
+            setShowDeleteDialog(false);
+            navigate('/parent-dashboard');
+          }}
+        />
+      )}
     </div>
   );
 }

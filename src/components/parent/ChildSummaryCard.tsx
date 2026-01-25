@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { TrendingUp, TrendingDown, Minus, Flame } from 'lucide-react';
+import { TrendingUp, TrendingDown, Minus, Flame, Pencil, Trash2 } from 'lucide-react';
 import { ProfileAvatar } from '@/components/profiles';
 import type { ChildProfile } from '@/types/auth';
 import type { ChildStatus } from '@/types/parent';
@@ -16,12 +16,14 @@ import {
 interface ChildSummaryCardProps {
   child: ChildProfile;
   onClick?: () => void;
+  onEdit?: () => void;
+  onDelete?: () => void;
 }
 
 /**
  * Summary card for a single child showing key metrics and status
  */
-export function ChildSummaryCard({ child, onClick }: ChildSummaryCardProps) {
+export function ChildSummaryCard({ child, onClick, onEdit, onDelete }: ChildSummaryCardProps) {
   const wordBank = useMemo(() => getChildWordBank(child.id), [child.id]);
 
   const summary = useMemo(() => {
@@ -79,11 +81,47 @@ export function ChildSummaryCard({ child, onClick }: ChildSummaryCardProps) {
   const TrendIcon = summary.accuracy >= 70 ? TrendingUp : summary.accuracy < 50 ? TrendingDown : Minus;
   const trendColor = summary.accuracy >= 70 ? 'text-green-500' : summary.accuracy < 50 ? 'text-red-500' : 'text-gray-400';
 
+  const handleEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onEdit?.();
+  };
+
+  const handleDelete = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    onDelete?.();
+  };
+
+  const showActions = onEdit || onDelete;
+
   return (
     <button
       onClick={onClick}
-      className={`w-full bg-white rounded-xl p-4 shadow-sm border-2 ${config.borderColor} hover:shadow-md transition-all text-left`}
+      className={`group relative w-full bg-white rounded-xl p-4 shadow-sm border-2 ${config.borderColor} hover:shadow-md transition-all text-left`}
     >
+      {/* Hover overlay with edit/delete actions */}
+      {showActions && (
+        <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 z-10">
+          {onEdit && (
+            <button
+              onClick={handleEdit}
+              className="p-3 bg-white/20 hover:bg-white/30 rounded-full transition-colors"
+              title="Edit profile"
+            >
+              <Pencil size={20} className="text-white" />
+            </button>
+          )}
+          {onDelete && (
+            <button
+              onClick={handleDelete}
+              className="p-3 bg-white/20 hover:bg-red-500/80 rounded-full transition-colors"
+              title="Delete profile"
+            >
+              <Trash2 size={20} className="text-white" />
+            </button>
+          )}
+        </div>
+      )}
+
       {/* Header with avatar and name */}
       <div className="flex items-center gap-3 mb-3">
         <ProfileAvatar

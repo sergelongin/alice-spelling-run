@@ -1,13 +1,15 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useParentDashboardAccess } from '@/hooks';
 import { PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
+import { EditProfileModal, DeleteConfirmDialog } from '@/components/profiles';
 import { ChildSummaryCard } from '@/components/parent/ChildSummaryCard';
 import { FamilyOverview } from '@/components/parent/FamilyOverview';
 import { AttentionNeededList } from '@/components/parent/AttentionNeededList';
+import type { ChildProfile } from '@/types/auth';
 
 /**
  * Parent Dashboard Screen - Unified view of all children's progress
@@ -32,6 +34,10 @@ export function ParentDashboardScreen() {
     createPin,
     closePinModal,
   } = useParentDashboardAccess();
+
+  // Modal state for edit/delete
+  const [editingChild, setEditingChild] = useState<ChildProfile | null>(null);
+  const [deletingChild, setDeletingChild] = useState<ChildProfile | null>(null);
 
   // Request PIN on mount if not authorized
   useEffect(() => {
@@ -114,6 +120,8 @@ export function ParentDashboardScreen() {
               key={child.id}
               child={child}
               onClick={() => navigate(`/parent-dashboard/child/${child.id}`)}
+              onEdit={() => setEditingChild(child)}
+              onDelete={() => setDeletingChild(child)}
             />
           ))}
 
@@ -135,6 +143,24 @@ export function ParentDashboardScreen() {
         {/* Needs Attention */}
         <AttentionNeededList children={children} />
       </div>
+
+      {/* Edit Profile Modal */}
+      {editingChild && (
+        <EditProfileModal
+          child={editingChild}
+          onClose={() => setEditingChild(null)}
+          onSaved={() => setEditingChild(null)}
+        />
+      )}
+
+      {/* Delete Confirm Dialog */}
+      {deletingChild && (
+        <DeleteConfirmDialog
+          child={deletingChild}
+          onClose={() => setDeletingChild(null)}
+          onDeleted={() => setDeletingChild(null)}
+        />
+      )}
     </div>
   );
 }

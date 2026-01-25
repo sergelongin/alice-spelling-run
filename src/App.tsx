@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { GameProvider } from './context/GameContext';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Layout } from './components/layout';
@@ -19,7 +19,6 @@ import {
   SignupScreen,
   ChildSetupScreen,
   ProfileSelectionScreen,
-  ManageProfilesScreen,
   ParentDashboardScreen,
   ChildDetailScreen,
 } from './components/screens';
@@ -74,13 +73,10 @@ function App() {
                 </ProtectedRoute>
               }
             />
+            {/* Redirect old manage profiles route to parent dashboard */}
             <Route
               path="/profiles/manage"
-              element={
-                <ProtectedRoute skipProfileRequirement>
-                  <ManageProfilesScreen />
-                </ProtectedRoute>
-              }
+              element={<Navigate to="/parent-dashboard" replace />}
             />
 
             {/* Parent Dashboard routes (PIN protected, no active child required) */}
