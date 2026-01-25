@@ -7,6 +7,7 @@ interface ContextButtonProps {
   contextLevel: ContextLevel;
   onRequestContext: () => Promise<void>;
   disabled?: boolean;
+  allowReplayAtFull?: boolean;
 }
 
 const LEVEL_LABELS: Record<ContextLevel, string> = {
@@ -25,14 +26,16 @@ export function ContextButton({
   contextLevel,
   onRequestContext,
   disabled = false,
+  allowReplayAtFull = false,
 }: ContextButtonProps) {
   const [isSpeaking, setIsSpeaking] = useState(false);
   const [cooldown, setCooldown] = useState(false);
 
   const canEscalate = contextLevel !== 'full';
+  const canClick = canEscalate || allowReplayAtFull;
 
   const handleClick = useCallback(async () => {
-    if (cooldown || isSpeaking || disabled || !canEscalate) return;
+    if (cooldown || isSpeaking || disabled || !canClick) return;
 
     setIsSpeaking(true);
     setCooldown(true);
@@ -47,9 +50,9 @@ export function ContextButton({
       // Cooldown to prevent spam clicking
       setTimeout(() => setCooldown(false), 1000);
     }
-  }, [cooldown, isSpeaking, disabled, canEscalate, onRequestContext]);
+  }, [cooldown, isSpeaking, disabled, canClick, onRequestContext]);
 
-  const isDisabled = disabled || isSpeaking || cooldown || !canEscalate;
+  const isDisabled = disabled || isSpeaking || cooldown || !canClick;
 
   return (
     <Button
@@ -61,7 +64,7 @@ export function ContextButton({
       preventFocusSteal
       title={LEVEL_DESCRIPTIONS[contextLevel]}
     >
-      {canEscalate ? (
+      {canClick ? (
         <BookOpen
           size={24}
           className={isSpeaking ? 'animate-pulse text-blue-500' : ''}

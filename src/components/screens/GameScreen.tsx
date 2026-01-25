@@ -337,11 +337,20 @@ export function GameScreen() {
 
   // Handle "More Context" button click - escalate and speak
   const handleContextRequest = useCallback(async () => {
-    if (!canEscalate || !currentWordData || !ttsSupported) return;
+    if (!currentWordData || !ttsSupported) return;
+
+    // In Meadow mode at full level, allow replaying the full context
+    if (!canEscalate && isMeadowMode && contextLevel === 'full') {
+      const text = formatPronunciation(currentWordData);
+      await speak(text);
+      return;
+    }
+
+    if (!canEscalate) return;
 
     // Escalate first, then the useEffect will handle speaking
     escalateContext();
-  }, [canEscalate, currentWordData, ttsSupported, escalateContext]);
+  }, [canEscalate, isMeadowMode, contextLevel, currentWordData, ttsSupported, escalateContext, formatPronunciation, speak]);
 
   const handleSubmit = useCallback(() => {
     submitAnswer(modeConfig);
@@ -485,6 +494,7 @@ export function GameScreen() {
                 contextLevel={contextLevel}
                 onRequestContext={handleContextRequest}
                 disabled={!isPlaying}
+                allowReplayAtFull={isMeadowMode}
               />
 
               {/* Skip button for Meadow mode */}
