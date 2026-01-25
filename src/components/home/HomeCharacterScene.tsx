@@ -16,7 +16,7 @@ export function HomeCharacterScene({
   const lionPosition = mood === 'relaxed' ? '5%' : mood === 'ready' ? '15%' : '20%';
 
   return (
-    <div className="relative w-full h-40 mb-4">
+    <div className="relative w-full h-32">
       {/* Lion on the left - prowling */}
       <div
         className="absolute bottom-8 lion-prowl"
@@ -32,11 +32,11 @@ export function HomeCharacterScene({
         <div className="relative">
           <PlayerSprite isRunning={false} />
 
-          {/* Speech bubble - positioned to the left of Alice */}
+          {/* Speech bubble - positioned to the left of Alice, vertically centered */}
           {showSpeechBubble && speechText && (
-            <div className="absolute -top-12 right-full mr-2 bg-white rounded-2xl px-4 py-2 shadow-lg border-2 border-amber-200 whitespace-nowrap animate-fade-in">
+            <div className="absolute top-1/2 -translate-y-1/2 right-full mr-2 bg-white rounded-2xl px-4 py-2 shadow-lg border-2 border-amber-200 whitespace-nowrap animate-fade-in">
               {/* Speech bubble tail pointing right */}
-              <div className="absolute top-4 -right-2 w-4 h-4 bg-white border-r-2 border-t-2 border-amber-200 transform rotate-45" />
+              <div className="absolute top-1/2 -translate-y-1/2 -right-2 w-4 h-4 bg-white border-r-2 border-t-2 border-amber-200 transform rotate-45" />
               <p className="text-sm text-gray-700 font-medium relative z-10">
                 {speechText}
               </p>

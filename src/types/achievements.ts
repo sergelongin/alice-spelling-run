@@ -395,3 +395,42 @@ export function getTodaysMissionMessage(
     subtitle: 'Check back later for more practice.',
   };
 }
+
+/**
+ * Get the next unearned achievement that the user is closest to earning.
+ * Returns null if all achievements are earned.
+ */
+export function getNextUnearnedAchievement(achievements: Achievement[]): Achievement | null {
+  // Filter to unearned achievements with progress
+  const unearned = achievements.filter(a => !a.isEarned && a.progress !== undefined && a.progress < 1);
+
+  if (unearned.length === 0) return null;
+
+  // Sort by progress descending (closest to earning first)
+  const sorted = [...unearned].sort((a, b) => (b.progress || 0) - (a.progress || 0));
+
+  return sorted[0];
+}
+
+/**
+ * Get the most recently mastered word (within the last N days).
+ * Returns null if no recent mastery.
+ */
+export function getMostRecentMasteredWord(words: Word[], withinDays: number = 7): Word | null {
+  const cutoff = new Date();
+  cutoff.setDate(cutoff.getDate() - withinDays);
+
+  // Find mastered words with recent successful attempts
+  const masteredWithRecentActivity = words
+    .filter(w => w.masteryLevel === 5 && w.isActive !== false)
+    .map(word => {
+      // Find the most recent correct attempt (which likely pushed to mastery)
+      const lastCorrect = word.attemptHistory?.find(a => a.wasCorrect);
+      const masteryDate = lastCorrect?.timestamp || word.lastAttemptAt || word.addedAt;
+      return { word, masteryDate: new Date(masteryDate) };
+    })
+    .filter(({ masteryDate }) => masteryDate >= cutoff)
+    .sort((a, b) => b.masteryDate.getTime() - a.masteryDate.getTime());
+
+  return masteredWithRecentActivity.length > 0 ? masteredWithRecentActivity[0].word : null;
+}
