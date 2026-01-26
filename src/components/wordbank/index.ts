@@ -12,4 +12,4 @@ export { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel
 export { ErrorPatternAnalysis, getActivePatternCount } from './ErrorPatternAnalysis';
 export { WordManagementTable } from './WordManagementTable';
 export { RecommendationsPanel } from './RecommendationsPanel';
-export { LearningActivityChart } from './LearningActivityChart';
+export { ActivityHeatmap } from './ActivityHeatmap';

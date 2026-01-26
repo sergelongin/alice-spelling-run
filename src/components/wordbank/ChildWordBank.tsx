@@ -1,6 +1,6 @@
 import React, { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Users } from 'lucide-react';
+import { Users } from 'lucide-react';
 import { Button, WordDetailModal } from '../common';
 import { TodaysMissionCard } from './TodaysMissionCard';
 import { ProgressJourney } from './ProgressJourney';
@@ -75,31 +75,10 @@ export function ChildWordBank() {
   return (
     <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
       {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => navigate('/')}
-            variant="secondary"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft size={20} />
-            Back
-          </Button>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-            My Spelling Adventure
-          </h1>
-        </div>
-
-        {/* Parent Dashboard link */}
-        <button
-          onClick={() => navigate('/parent-dashboard')}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gray-100 hover:bg-gray-200
-                   text-gray-600 hover:text-gray-800 transition-colors text-sm font-medium"
-        >
-          <Users size={18} />
-          <span className="hidden sm:inline">Parent Dashboard</span>
-        </button>
+      <div className="mb-6">
+        <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
+          My Spelling Adventure
+        </h1>
       </div>
 
       {/* Two-column layout */}

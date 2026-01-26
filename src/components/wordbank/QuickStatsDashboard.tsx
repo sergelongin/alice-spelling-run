@@ -1,9 +1,8 @@
-import { BookOpen, Trophy, Target, Flame } from 'lucide-react';
+import { BookOpen, Trophy, Flame } from 'lucide-react';
 
 interface QuickStatsDashboardProps {
   totalWords: number;
   masteredWords: number;
-  accuracy: number;
   streak: number;
 }
 
@@ -14,7 +13,6 @@ interface QuickStatsDashboardProps {
 export function QuickStatsDashboard({
   totalWords,
   masteredWords,
-  accuracy,
   streak,
 }: QuickStatsDashboardProps) {
   const masteryPercent = totalWords > 0 ? Math.round((masteredWords / totalWords) * 100) : 0;
@@ -37,14 +35,6 @@ export function QuickStatsDashboard({
       bgColor: 'bg-green-50',
     },
     {
-      label: 'Accuracy',
-      value: `${accuracy}%`,
-      subtext: 'overall',
-      icon: <Target className="w-5 h-5" />,
-      color: 'text-purple-600',
-      bgColor: 'bg-purple-50',
-    },
-    {
       label: 'Streak',
       value: streak.toString(),
       subtext: 'days',
@@ -55,7 +45,7 @@ export function QuickStatsDashboard({
   ];
 
   return (
-    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+    <div className="grid grid-cols-3 gap-3">
       {stats.map(stat => (
         <div
           key={stat.label}

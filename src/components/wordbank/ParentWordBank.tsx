@@ -12,7 +12,7 @@ import {
 import { Button, Modal, WordDetailModal } from '../common';
 import { QuickStatsDashboard } from './QuickStatsDashboard';
 import { AttentionNeededAlert } from './AttentionNeededAlert';
-import { LearningActivityChart } from './LearningActivityChart';
+import { ActivityHeatmap } from './ActivityHeatmap';
 import { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';
 import { ErrorPatternAnalysis, getActivePatternCount } from './ErrorPatternAnalysis';
 import { WordManagementTable } from './WordManagementTable';
@@ -75,16 +75,6 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     getActivePatternCount(statistics.errorPatterns),
     [statistics.errorPatterns]
   );
-
-  const overallAccuracy = useMemo(() => {
-    let total = 0;
-    let correct = 0;
-    for (const word of wordBank.words) {
-      total += word.timesUsed;
-      correct += word.timesCorrect;
-    }
-    return total > 0 ? Math.round((correct / total) * 100) : 0;
-  }, [wordBank.words]);
 
   const streak = useMemo(() =>
     calculatePracticeStreak(wordBank.words),
@@ -206,7 +196,6 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
             <QuickStatsDashboard
               totalWords={activeWords.length}
               masteredWords={wordStates.mastered.length}
-              accuracy={overallAccuracy}
               streak={streak}
             />
           </div>
@@ -219,8 +208,8 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
           </div>
         </div>
 
-        {/* Learning Activity Chart */}
-        <LearningActivityChart words={wordBank.words} />
+        {/* Activity Heatmap */}
+        <ActivityHeatmap words={wordBank.words} />
 
         {/* Struggling Words Panel */}
         <div id="panel-struggling">

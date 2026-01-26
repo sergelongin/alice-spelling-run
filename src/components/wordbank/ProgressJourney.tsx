@@ -1,11 +1,70 @@
-import { useState } from 'react';
-import { BookOpen, Sparkles, Star, ChevronRight } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { BookOpen, Sparkles, Star, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Word } from '@/types';
 import { categorizeWordsByState, WordState } from '@/utils/wordSelection';
+
+const WORDS_PER_PAGE = 10;
 
 interface ProgressJourneyProps {
   words: Word[];
   onWordClick?: (word: Word) => void;
+}
+
+interface WordProgressRowProps {
+  word: Word;
+  state: WordState;
+  onClick?: (word: Word) => void;
+}
+
+function WordProgressRow({ word, state, onClick }: WordProgressRowProps) {
+  const attempts = word.timesUsed;
+
+  // Calculate progress to next state
+  let progressPercent: number;
+  let progressLabel: string;
+
+  if (state === 'learning') {
+    // Learning (mastery 0-1): Need to reach mastery 2 (Reviewing)
+    // Show correctStreak progress - need consistent correct answers
+    progressPercent = Math.min(word.correctStreak, 2) / 2 * 100;
+    progressLabel = `${word.correctStreak}/2 streak`;
+  } else if (state === 'review') {
+    // Reviewing (mastery 2-4): Progress toward mastery 5
+    progressPercent = ((word.masteryLevel - 2) / 3) * 100;
+    progressLabel = `Level ${word.masteryLevel}/5`;
+  } else {
+    // Mastered: Show complete
+    progressPercent = 100;
+    progressLabel = 'Mastered!';
+  }
+
+  const stateColors: Record<WordState, string> = {
+    available: 'bg-gray-400',
+    learning: 'bg-orange-400',
+    review: 'bg-blue-400',
+    mastered: 'bg-green-400',
+  };
+
+  return (
+    <button
+      onClick={() => onClick?.(word)}
+      className="w-full text-left p-3 hover:bg-gray-50 transition-colors"
+    >
+      <div className="flex items-center justify-between mb-1">
+        <span className="font-medium capitalize text-gray-800">{word.text}</span>
+        <span className="text-xs text-gray-400">{attempts} attempt{attempts !== 1 ? 's' : ''}</span>
+      </div>
+      <div className="flex items-center gap-2">
+        <div className="flex-1 h-1.5 bg-gray-100 rounded-full overflow-hidden">
+          <div
+            className={`h-full rounded-full ${stateColors[state]}`}
+            style={{ width: `${progressPercent}%` }}
+          />
+        </div>
+        <span className="text-xs text-gray-500 w-16 text-right">{progressLabel}</span>
+      </div>
+    </button>
+  );
 }
 
 interface CategoryViewProps {
@@ -13,49 +72,58 @@ interface CategoryViewProps {
   words: Word[];
   state: WordState;
   onWordClick?: (word: Word) => void;
-  onClose: () => void;
 }
 
-function CategoryView({ title, words, state, onWordClick, onClose }: CategoryViewProps) {
-  const getStateColor = () => {
-    switch (state) {
-      case 'learning':
-        return 'bg-orange-100 text-orange-700 border-orange-200';
-      case 'review':
-        return 'bg-blue-100 text-blue-700 border-blue-200';
-      case 'mastered':
-        return 'bg-green-100 text-green-700 border-green-200';
-      default:
-        return 'bg-gray-100 text-gray-700 border-gray-200';
-    }
-  };
+function CategoryView({ title, words, state, onWordClick }: CategoryViewProps) {
+  const [page, setPage] = useState(0);
+  const totalPages = Math.ceil(words.length / WORDS_PER_PAGE);
+  const paginatedWords = words.slice(page * WORDS_PER_PAGE, (page + 1) * WORDS_PER_PAGE);
+
+  // Reset to first page when words change (e.g., switching categories)
+  useEffect(() => {
+    setPage(0);
+  }, [words]);
 
   return (
     <div className="mt-4 bg-white rounded-xl border-2 border-gray-100 overflow-hidden">
-      <div className="flex items-center justify-between px-4 py-3 bg-gray-50 border-b border-gray-100">
+      <div className="px-4 py-3 bg-gray-50 border-b border-gray-100 flex items-center justify-between">
         <h4 className="font-semibold text-gray-700">{title}</h4>
-        <button
-          onClick={onClose}
-          className="text-sm text-gray-500 hover:text-gray-700"
-        >
-          Close
-        </button>
+        {totalPages > 1 && (
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setPage(p => Math.max(0, p - 1))}
+              disabled={page === 0}
+              className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Previous page"
+            >
+              <ChevronLeft size={18} className="text-gray-600" />
+            </button>
+            <span className="text-sm text-gray-500">
+              {page + 1} / {totalPages}
+            </span>
+            <button
+              onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+              disabled={page === totalPages - 1}
+              className="p-1 rounded hover:bg-gray-200 disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+              aria-label="Next page"
+            >
+              <ChevronRight size={18} className="text-gray-600" />
+            </button>
+          </div>
+        )}
       </div>
-      <div className="p-4 max-h-48 overflow-y-auto">
+      <div>
         {words.length === 0 ? (
-          <p className="text-gray-400 text-sm text-center py-2">No words in this category yet</p>
+          <p className="text-gray-400 text-sm text-center py-4">No words in this category yet</p>
         ) : (
-          <div className="flex flex-wrap gap-2">
-            {words.map(word => (
-              <button
+          <div className="divide-y divide-gray-100">
+            {paginatedWords.map(word => (
+              <WordProgressRow
                 key={word.id}
-                onClick={() => onWordClick?.(word)}
-                className={`px-3 py-1.5 rounded-full text-sm font-medium border
-                          transition-all hover:scale-105 hover:shadow-md capitalize
-                          ${getStateColor()}`}
-              >
-                {word.text}
-              </button>
+                word={word}
+                state={state}
+                onClick={onWordClick}
+              />
             ))}
           </div>
         )}
@@ -69,11 +137,16 @@ function CategoryView({ title, words, state, onWordClick, onClose }: CategoryVie
  * Interactive: tap each section to see words in that state.
  */
 export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
-  const [expandedCategory, setExpandedCategory] = useState<WordState | null>(null);
+  const [expandedCategory, setExpandedCategory] = useState<WordState>('learning');
 
   // Only count active words
   const activeWords = words.filter(w => w.isActive !== false);
-  const { learning, review, mastered } = categorizeWordsByState(activeWords);
+  const categorized = categorizeWordsByState(activeWords);
+
+  // Sort each category alphabetically
+  const learning = [...categorized.learning].sort((a, b) => a.text.localeCompare(b.text));
+  const review = [...categorized.review].sort((a, b) => a.text.localeCompare(b.text));
+  const mastered = [...categorized.mastered].sort((a, b) => a.text.localeCompare(b.text));
 
   const total = learning.length + review.length + mastered.length;
   if (total === 0) {
@@ -168,7 +241,7 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
         {categories.map(cat => (
           <button
             key={cat.state}
-            onClick={() => setExpandedCategory(expandedCategory === cat.state ? null : cat.state)}
+            onClick={() => setExpandedCategory(cat.state)}
             className={`relative p-3 rounded-xl transition-all ${cat.lightColor}
                        hover:shadow-md hover:scale-[1.02] active:scale-[0.98]
                        ${expandedCategory === cat.state ? 'ring-2 ring-offset-2 ring-gray-300' : ''}`}
@@ -191,15 +264,12 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
       </div>
 
       {/* Expanded category view */}
-      {expandedCategory && (
-        <CategoryView
-          title={categories.find(c => c.state === expandedCategory)?.label || ''}
-          words={categories.find(c => c.state === expandedCategory)?.words || []}
-          state={expandedCategory}
-          onWordClick={onWordClick}
-          onClose={() => setExpandedCategory(null)}
-        />
-      )}
+      <CategoryView
+        title={categories.find(c => c.state === expandedCategory)?.label || ''}
+        words={categories.find(c => c.state === expandedCategory)?.words || []}
+        state={expandedCategory}
+        onWordClick={onWordClick}
+      />
     </div>
   );
 }

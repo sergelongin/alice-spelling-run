@@ -28,7 +28,7 @@ export function AlmostThereSection({ words }: AlmostThereSectionProps) {
 
     for (const word of words) {
       if (word.isActive === false) continue;
-      if (word.timesUsed < 3) continue;
+      if (word.timesUsed < 2) continue;
 
       const accuracy = word.timesUsed > 0
         ? Math.round((word.timesCorrect / word.timesUsed) * 100)
