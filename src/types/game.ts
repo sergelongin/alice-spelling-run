@@ -29,6 +29,7 @@ export interface GameState {
   showConfetti: boolean;
   currentAttempts: number;
   wordStartTime: number; // Timestamp when current word started (for personal best tracking)
+  sessionStartTime: number; // Timestamp when session started (for total time tracking)
 }
 
 // Tracks a wrong attempt for error pattern analysis

@@ -42,6 +42,7 @@ const initialState: GameState = {
   showConfetti: false,
   currentAttempts: 0,
   wordStartTime: 0,
+  sessionStartTime: 0,
 };
 
 function gameReducer(state: GameState, action: GameAction): GameState {
@@ -50,6 +51,7 @@ function gameReducer(state: GameState, action: GameAction): GameState {
       const config = action.config;
       const lives = config?.hasLives ? config.initialLives : 999; // Unlimited lives if mode doesn't have lives
       const maxTime = config?.hasTimer ? config.timePerWord : 999999;
+      const now = Date.now();
 
       return {
         ...initialState,
@@ -61,7 +63,8 @@ function gameReducer(state: GameState, action: GameAction): GameState {
         maxTime,
         wrongAttempts: [],
         sessionWrongAttempts: [], // Track all session wrong attempts for error analysis
-        wordStartTime: Date.now(), // Track when this word started
+        wordStartTime: now, // Track when this word started
+        sessionStartTime: now, // Track when session started
       };
     }
 
@@ -322,7 +325,7 @@ export function useGameState(): UseGameStateReturn {
       won: isWon,
       completedWords: gameState.completedWords,
       wrongAttempts: gameState.sessionWrongAttempts, // Include wrong attempts for error pattern analysis
-      totalTime: 0, // Would need to track this separately
+      totalTime: Date.now() - gameState.sessionStartTime,
     };
   }, [gameState]);
 

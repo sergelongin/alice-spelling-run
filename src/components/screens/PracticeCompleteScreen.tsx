@@ -1,7 +1,56 @@
 import { useLocation, useNavigate } from 'react-router-dom';
-import { Home, RotateCcw, Flower2, CheckCircle, Target } from 'lucide-react';
+import { Home, RotateCcw, Flower2, Star, Clock, Calendar } from 'lucide-react';
 import { Button } from '../common';
 import { GameResult } from '@/types';
+
+// Format duration in seconds to a human-readable string
+function formatDuration(seconds: number): string {
+  if (seconds < 60) {
+    return `${Math.round(seconds)}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = Math.round(seconds % 60);
+  return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+}
+
+// Format date to a friendly string
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  const today = new Date();
+  const isToday = date.toDateString() === today.toDateString();
+
+  if (isToday) {
+    return `Today at ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+}
+
+// Component to display attempt history for a single word
+function WordAttemptRow({ word, wrongAttempts }: { word: string; wrongAttempts: string[] }) {
+  return (
+    <div className="flex items-center gap-3 py-1.5">
+      {/* Word label */}
+      <span className="w-32 text-base font-medium text-gray-700 truncate flex-shrink-0 capitalize">{word}</span>
+
+      {/* Attempt chips */}
+      <div className="flex flex-wrap gap-1.5">
+        {/* Wrong attempts (red chips) */}
+        {wrongAttempts.map((attempt, i) => (
+          <span
+            key={i}
+            className="px-3 py-1 text-sm rounded-full bg-red-100 text-red-700 font-medium"
+          >
+            {attempt}
+          </span>
+        ))}
+        {/* Correct (green chip) */}
+        <span className="px-3 py-1 text-sm rounded-full bg-green-100 text-green-700 font-medium">
+          {word}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 export function PracticeCompleteScreen() {
   const navigate = useNavigate();
@@ -21,97 +70,88 @@ export function PracticeCompleteScreen() {
     );
   }
 
-  const accuracy = result.wordsAttempted > 0
-    ? Math.round((result.wordsCorrect / result.wordsAttempted) * 100)
+  // Group wrong attempts by word
+  const attemptsByWord = (result.wrongAttempts || []).reduce((acc, wa) => {
+    if (!acc[wa.word]) acc[wa.word] = [];
+    acc[wa.word].push(wa.attempt);
+    return acc;
+  }, {} as Record<string, string[]>);
+
+  // Calculate first-try success rate for star rating
+  const firstTryWords = result.completedWords.filter(w => w.attempts === 1).length;
+  const firstTryRate = result.completedWords.length > 0
+    ? (firstTryWords / result.completedWords.length) * 100
     : 0;
 
-  // Find most challenging words (most attempts)
-  const challengingWords = [...result.completedWords]
-    .sort((a, b) => b.attempts - a.attempts)
-    .slice(0, 3)
-    .filter(w => w.attempts > 1);
+  // Determine star rating (1-3 stars)
+  const getStarRating = (rate: number): number => {
+    if (rate >= 70) return 3;
+    if (rate >= 40) return 2;
+    return 1;
+  };
+  const starRating = getStarRating(firstTryRate);
+
+  // Star display component (smaller stars)
+  const StarDisplay = ({ rating }: { rating: number }) => {
+    const stars = [];
+    for (let i = 1; i <= 3; i++) {
+      stars.push(
+        <Star
+          key={i}
+          className={`w-8 h-8 ${
+            i <= rating
+              ? 'text-yellow-400 fill-yellow-400'
+              : 'text-gray-300'
+          }`}
+        />
+      );
+    }
+    return <div className="flex gap-1">{stars}</div>;
+  };
 
   return (
-    <div className="flex-1 flex flex-col items-center justify-center p-8">
-      {/* Peaceful header */}
-      <div className="text-center mb-8">
-        <div className="inline-flex items-center justify-center w-24 h-24 bg-green-100 rounded-full mb-4">
-          <Flower2 className="w-12 h-12 text-green-500" />
-        </div>
-        <h1 className="text-4xl font-bold text-green-700 mb-2">
-          Practice Complete!
-        </h1>
-        <p className="text-xl text-gray-600">
-          Great job practicing your spelling
-        </p>
-      </div>
-
-      {/* Stats cards */}
-      <div className="grid grid-cols-2 gap-4 max-w-md w-full mb-8">
-        <div className="bg-white rounded-xl p-6 text-center shadow-md border border-green-100">
-          <CheckCircle className="w-8 h-8 text-green-500 mx-auto mb-2" />
-          <div className="text-3xl font-bold text-green-600">
-            {result.wordsCorrect}
+    <div className="flex-1 flex flex-col items-center justify-center p-4 md:p-8">
+      {/* Header card with completion info */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 max-w-lg w-full mb-6">
+        <div className="flex items-center gap-4">
+          <div className="w-16 h-16 bg-green-100 rounded-full flex items-center justify-center flex-shrink-0">
+            <Flower2 className="w-8 h-8 text-green-500" />
           </div>
-          <div className="text-sm text-gray-600">Words Spelled</div>
+          <div className="flex-1">
+            <h1 className="text-2xl md:text-3xl font-bold text-green-700">Practice Complete!</h1>
+            <StarDisplay rating={starRating} />
+            <p className="text-sm text-gray-500">
+              {firstTryWords} of {result.completedWords.length} first try
+            </p>
+          </div>
         </div>
 
-        <div className="bg-white rounded-xl p-6 text-center shadow-md border border-blue-100">
-          <Target className="w-8 h-8 text-blue-500 mx-auto mb-2" />
-          <div className="text-3xl font-bold text-blue-600">
-            {accuracy}%
+        {/* Date and time row */}
+        <div className="flex items-center gap-4 mt-4 pt-4 border-t border-gray-100 text-sm text-gray-500">
+          <div className="flex items-center gap-1.5">
+            <Calendar size={16} className="text-gray-400" />
+            <span>{formatDate(result.date)}</span>
           </div>
-          <div className="text-sm text-gray-600">Accuracy</div>
+          <div className="flex items-center gap-1.5">
+            <Clock size={16} className="text-gray-400" />
+            <span>{formatDuration(result.totalTime / 1000)}</span>
+          </div>
         </div>
       </div>
 
-      {/* Words practiced */}
-      <div className="bg-white rounded-xl p-6 max-w-md w-full mb-8 shadow-md">
-        <h2 className="text-lg font-semibold text-gray-800 mb-4">
-          Words Practiced
-        </h2>
-        <div className="flex flex-wrap gap-2">
-          {result.completedWords.map((word, index) => (
-            <span
-              key={index}
-              className={`px-3 py-1 rounded-full text-sm ${
-                word.attempts === 1
-                  ? 'bg-green-100 text-green-700'
-                  : word.attempts <= 3
-                  ? 'bg-yellow-100 text-yellow-700'
-                  : 'bg-orange-100 text-orange-700'
-              }`}
-            >
-              {word.word}
-              {word.attempts > 1 && (
-                <span className="ml-1 text-xs opacity-70">({word.attempts})</span>
-              )}
-            </span>
+      {/* Word list with attempt timeline */}
+      <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100 max-w-lg w-full mb-6">
+        <h3 className="text-lg font-bold text-gray-800 mb-4">Words Practiced</h3>
+        <div className="space-y-1">
+          {result.completedWords.map(word => (
+            <WordAttemptRow
+              key={word.word}
+              word={word.word}
+              wrongAttempts={attemptsByWord[word.word] || []}
+            />
           ))}
         </div>
       </div>
-
-      {/* Challenging words feedback */}
-      {challengingWords.length > 0 && (
-        <div className="bg-amber-50 rounded-xl p-6 max-w-md w-full mb-8 border border-amber-200">
-          <h2 className="text-lg font-semibold text-amber-800 mb-3">
-            Keep Practicing These
-          </h2>
-          <p className="text-sm text-amber-700 mb-3">
-            These words took a few tries - great job sticking with them!
-          </p>
-          <div className="flex flex-wrap gap-2">
-            {challengingWords.map((word, index) => (
-              <span
-                key={index}
-                className="px-3 py-1 bg-amber-100 rounded-full text-amber-800 font-medium"
-              >
-                {word.word}
-              </span>
-            ))}
-          </div>
-        </div>
-      )}
 
       {/* Action buttons */}
       <div className="flex gap-4">
@@ -135,11 +175,6 @@ export function PracticeCompleteScreen() {
           Home
         </Button>
       </div>
-
-      {/* Encouragement */}
-      <p className="text-center text-gray-500 text-sm mt-8 max-w-md">
-        Remember: Practice makes perfect! Every word you practice helps build your spelling skills.
-      </p>
     </div>
   );
 }
