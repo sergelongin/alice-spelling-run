@@ -254,3 +254,161 @@ export function isAIAvailable(): boolean {
 export function getCurrentProvider(): AIProvider {
   return getProvider();
 }
+
+// =============================================================================
+// Word Definition Generation
+// =============================================================================
+
+interface WordDefinitionResult {
+  definition: string;
+  sentence: string;
+  gradeLevel: 3 | 4 | 5 | 6;
+}
+
+const WORD_DEFINITION_SYSTEM_PROMPT = `You are a vocabulary assistant for a children's spelling app (ages 8-12).
+
+Given a word, provide:
+1. A clear, child-friendly definition (1-2 sentences)
+2. An example sentence using the word naturally
+3. The appropriate grade level (3-6) based on word complexity
+
+Respond ONLY with valid JSON in this exact format:
+{
+  "definition": "...",
+  "sentence": "...",
+  "gradeLevel": 4
+}
+
+Guidelines:
+- Definitions should be simple and accurate
+- Sentences should be relatable to children
+- Grade 3: Common words, simple patterns
+- Grade 4: More complex patterns, common academic words
+- Grade 5: Academic vocabulary, Latin/Greek roots
+- Grade 6: Advanced vocabulary, abstract concepts
+
+Do not include any text outside the JSON object.`;
+
+/**
+ * Generate a definition, example sentence, and grade level for a word using AI
+ */
+export async function generateWordDefinition(word: string): Promise<WordDefinitionResult | null> {
+  const provider = getProvider();
+  const apiKey = getApiKey(provider);
+
+  if (!apiKey) {
+    console.warn(`No API key configured for provider: ${provider}`);
+    return null;
+  }
+
+  const userPrompt = `Word: ${word}`;
+
+  try {
+    let responseText: string;
+
+    switch (provider) {
+      case 'openai': {
+        const response = await fetch('https://api.openai.com/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'gpt-4o-mini',
+            messages: [
+              { role: 'system', content: WORD_DEFINITION_SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+            ],
+            max_tokens: 200,
+            temperature: 0.7,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`OpenAI API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        responseText = data.choices[0]?.message?.content || '';
+        break;
+      }
+
+      case 'anthropic': {
+        const response = await fetch('https://api.anthropic.com/v1/messages', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'x-api-key': apiKey,
+            'anthropic-version': '2023-06-01',
+            'anthropic-dangerous-direct-browser-access': 'true',
+          },
+          body: JSON.stringify({
+            model: 'claude-3-haiku-20240307',
+            max_tokens: 200,
+            system: WORD_DEFINITION_SYSTEM_PROMPT,
+            messages: [
+              { role: 'user', content: userPrompt },
+            ],
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Anthropic API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        responseText = data.content[0]?.text || '';
+        break;
+      }
+
+      case 'groq': {
+        const response = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${apiKey}`,
+          },
+          body: JSON.stringify({
+            model: 'llama-3.1-8b-instant',
+            messages: [
+              { role: 'system', content: WORD_DEFINITION_SYSTEM_PROMPT },
+              { role: 'user', content: userPrompt },
+            ],
+            max_tokens: 200,
+            temperature: 0.7,
+          }),
+        });
+
+        if (!response.ok) {
+          throw new Error(`Groq API error: ${response.status}`);
+        }
+
+        const data = await response.json();
+        responseText = data.choices?.[0]?.message?.content || '';
+        break;
+      }
+
+      default:
+        return null;
+    }
+
+    // Parse the JSON response
+    const parsed = JSON.parse(responseText.trim()) as WordDefinitionResult;
+
+    // Validate the response structure
+    if (
+      typeof parsed.definition !== 'string' ||
+      typeof parsed.sentence !== 'string' ||
+      ![3, 4, 5, 6].includes(parsed.gradeLevel)
+    ) {
+      console.error('Invalid AI response structure:', parsed);
+      return null;
+    }
+
+    return parsed;
+  } catch (error) {
+    console.error('Error generating word definition:', error);
+    return null;
+  }
+}

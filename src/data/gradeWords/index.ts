@@ -3,6 +3,8 @@ import { grade4Words, grade4WordStrings } from './grade4';
 import { grade5Words, grade5WordStrings } from './grade5';
 import { grade6Words, grade6WordStrings } from './grade6';
 import { WordDefinition } from './types';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
+import type { Word } from '@/types/database';
 
 export { grade3Words, grade4Words, grade5Words, grade6Words };
 export { grade3WordStrings, grade4WordStrings, grade5WordStrings, grade6WordStrings };
@@ -117,4 +119,149 @@ export function suggestGradeLevel(
 // Get grade level display info
 export function getGradeInfo(grade: GradeLevel): GradeLevelInfo | undefined {
   return GRADE_INFO.find(info => info.grade === grade);
+}
+
+// =============================================================================
+// SUPABASE INTEGRATION
+// Async functions to fetch words from Supabase with fallback to local files
+// =============================================================================
+
+// Cache for Supabase words
+let cachedSupabaseWords: Map<GradeLevel, WordDefinition[]> | null = null;
+let cacheTimestamp: number | null = null;
+const CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+/**
+ * Convert Supabase Word row to WordDefinition
+ */
+function toWordDefinition(word: Word): WordDefinition {
+  return {
+    word: word.word,
+    definition: word.definition,
+    example: word.example || undefined,
+  };
+}
+
+/**
+ * Group words by grade level
+ */
+function groupByGrade(words: Word[]): Map<GradeLevel, WordDefinition[]> {
+  const grouped = new Map<GradeLevel, WordDefinition[]>();
+
+  for (const grade of [3, 4, 5, 6] as GradeLevel[]) {
+    grouped.set(grade, []);
+  }
+
+  for (const word of words) {
+    const gradeWords = grouped.get(word.grade_level as GradeLevel);
+    if (gradeWords) {
+      gradeWords.push(toWordDefinition(word));
+    }
+  }
+
+  return grouped;
+}
+
+/**
+ * Check if cache is still valid
+ */
+function isCacheValid(): boolean {
+  if (!cachedSupabaseWords || !cacheTimestamp) return false;
+  return Date.now() - cacheTimestamp < CACHE_TTL;
+}
+
+/**
+ * Fetch all words from Supabase and cache them
+ */
+async function fetchAndCacheWords(): Promise<Map<GradeLevel, WordDefinition[]>> {
+  if (!isSupabaseConfigured()) {
+    // Return local words as Map
+    return new Map<GradeLevel, WordDefinition[]>([
+      [3, grade3Words],
+      [4, grade4Words],
+      [5, grade5Words],
+      [6, grade6Words],
+    ]);
+  }
+
+  const { data, error } = await supabase
+    .from('words')
+    .select('*')
+    .eq('is_active', true)
+    .order('word', { ascending: true });
+
+  if (error || !data || data.length === 0) {
+    console.warn('[GradeWords] Supabase fetch failed or empty, using local files:', error?.message);
+    // Return local words as fallback
+    return new Map<GradeLevel, WordDefinition[]>([
+      [3, grade3Words],
+      [4, grade4Words],
+      [5, grade5Words],
+      [6, grade6Words],
+    ]);
+  }
+
+  // Cache the results
+  cachedSupabaseWords = groupByGrade(data as Word[]);
+  cacheTimestamp = Date.now();
+
+  return cachedSupabaseWords;
+}
+
+/**
+ * Invalidate the word cache (call after adding/removing words)
+ */
+export function invalidateWordCache(): void {
+  cachedSupabaseWords = null;
+  cacheTimestamp = null;
+}
+
+/**
+ * Fetch words for a specific grade from Supabase
+ * Falls back to local files if Supabase is unavailable
+ */
+export async function fetchWordsForGrade(grade: GradeLevel): Promise<WordDefinition[]> {
+  // Use cache if valid
+  if (isCacheValid() && cachedSupabaseWords) {
+    return cachedSupabaseWords.get(grade) || [];
+  }
+
+  // Fetch and cache all words
+  const wordsByGrade = await fetchAndCacheWords();
+  return wordsByGrade.get(grade) || [];
+}
+
+/**
+ * Fetch words for multiple grades from Supabase
+ */
+export async function fetchWordsUpToGrade(maxGrade: GradeLevel): Promise<WordDefinition[]> {
+  // Use cache if valid
+  if (!isCacheValid() || !cachedSupabaseWords) {
+    await fetchAndCacheWords();
+  }
+
+  const words: WordDefinition[] = [];
+  for (let g = 3; g <= maxGrade; g++) {
+    const gradeWords = cachedSupabaseWords?.get(g as GradeLevel) || [];
+    words.push(...gradeWords);
+  }
+  return words;
+}
+
+/**
+ * Check if Supabase words are available
+ */
+export async function hasSupabaseWords(): Promise<boolean> {
+  if (!isSupabaseConfigured()) return false;
+
+  try {
+    const { count, error } = await supabase
+      .from('words')
+      .select('*', { count: 'exact', head: true })
+      .eq('is_active', true);
+
+    return !error && (count || 0) > 0;
+  } catch {
+    return false;
+  }
 }
