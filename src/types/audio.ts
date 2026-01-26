@@ -2,6 +2,9 @@ import type { AudioPronunciation } from './database';
 
 export type { AudioPronunciation };
 
+// Audio segment types for word, definition, and sentence pronunciations
+export type AudioSegmentType = 'word' | 'definition' | 'sentence';
+
 export interface AudioVoiceConfig {
   voiceId: string;
   emotion: string;
@@ -66,4 +69,46 @@ export interface WordAudioStatus {
   grade: number;
   hasAudio: boolean;
   pronunciation?: AudioPronunciation;
+}
+
+/**
+ * Status for a single audio segment
+ */
+export interface SegmentAudioStatus {
+  hasAudio: boolean;
+  pronunciation?: AudioPronunciation;
+  isGenerating?: boolean;
+  error?: string;
+}
+
+/**
+ * Complete audio status for all segments of a word
+ */
+export interface WordSegmentStatus {
+  word: string;
+  definition: string;
+  sentence: string;
+  grade: number;
+  segments: {
+    word: SegmentAudioStatus;
+    definition: SegmentAudioStatus;
+    sentence: SegmentAudioStatus;
+  };
+}
+
+/**
+ * Audio storage metadata with segment support
+ */
+export interface AudioSegmentMetadata {
+  word: string;
+  wordNormalized: string;
+  segmentType: AudioSegmentType;
+  textContent: string;
+  voiceId: string;
+  emotion: string;
+  speed: number;
+  volume?: number;
+  storagePath: string;
+  fileSizeBytes?: number;
+  durationMs?: number;
 }
