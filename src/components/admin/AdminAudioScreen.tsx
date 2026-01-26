@@ -1,126 +1,395 @@
-import { useState, useEffect, useMemo } from 'react';
-import { Volume2, Check, X, Loader2, RefreshCw, Play, Filter } from 'lucide-react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { Volume2, Loader2, RefreshCw, Filter, Plus, AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAdminAudioGenerator } from '@/hooks/useAdminAudioGenerator';
 import { useSupabaseAudio } from '@/hooks/useSupabaseAudio';
-import { getAudioForWords, normalizeWord } from '@/services/audioStorage';
-import { GRADE_WORDS, type GradeLevel, type WordDefinition } from '@/data/gradeWords';
-import type { AudioPronunciation, GradeFilter, WordAudioStatus } from '@/types/audio';
+import {
+  getAudioSegmentsForWords,
+  getSegmentKey,
+  normalizeWord,
+  getAudioPublicUrl,
+  getSegmentCounts,
+} from '@/services/audioStorage';
+import { getWordsPaginated, getWordCount } from '@/services/wordBankService';
+import type { GradeLevel, WordDefinition } from '@/data/gradeWords';
+import type { AudioPronunciation, GradeFilter, AudioSegmentType, SegmentAudioStatus } from '@/types/audio';
 import { AudioGenerationProgress } from './AudioGenerationProgress';
+import { WordDetailDialog } from './WordDetailDialog';
+import { AddWordModal } from './AddWordModal';
 
 // Voice ID from environment (same as other audio uses)
 const getVoiceId = (): string => {
   return import.meta.env.VITE_CARTESIA_VOICE_ID || '79a125e8-cd45-4c13-8a67-188112f4dd22';
 };
 
+interface WordWithGrade extends WordDefinition {
+  grade: number;
+  id?: string;
+}
+
+const PAGE_SIZE = 50;
+
 export function AdminAudioScreen() {
   const [gradeFilter, setGradeFilter] = useState<GradeFilter>('all');
-  const [audioStatus, setAudioStatus] = useState<Map<string, AudioPronunciation>>(new Map());
+  const [words, setWords] = useState<WordWithGrade[]>([]);
+  const [audioSegments, setAudioSegments] = useState<Map<string, AudioPronunciation>>(new Map());
   const [isLoading, setIsLoading] = useState(true);
-  const [playingWord, setPlayingWord] = useState<string | null>(null);
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [playingSegment, setPlayingSegment] = useState<string | null>(null);
+  const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+  const [selectedWord, setSelectedWord] = useState<string | null>(null);
 
-  const { generateWord, generateBatch, cancelGeneration, batchState, getWordStatus } =
-    useAdminAudioGenerator();
-  const { playFromSupabase, isPlaying } = useSupabaseAudio();
+  // Pagination state
+  const [page, setPage] = useState(0);
+  const [totalPages, setTotalPages] = useState(0);
+  const [totalWords, setTotalWords] = useState(0);
 
-  // Get all words with their grades
-  const allWords = useMemo<Array<WordDefinition & { grade: GradeLevel }>>(() => {
-    const words: Array<WordDefinition & { grade: GradeLevel }> = [];
-    for (const grade of [3, 4, 5, 6] as GradeLevel[]) {
-      const gradeWords = GRADE_WORDS[grade] || [];
-      for (const word of gradeWords) {
-        words.push({ ...word, grade });
-      }
+  // Search state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchInput, setSearchInput] = useState('');
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track recently regenerated segments for cache busting
+  // Map of "word:segmentType" -> timestamp
+  const [cacheBustTimestamps, setCacheBustTimestamps] = useState<Map<string, number>>(new Map());
+
+  // Global stats (fetched via COUNT queries, not affected by pagination)
+  const [globalStats, setGlobalStats] = useState<{
+    totalWords: number;
+    segmentsReady: number;
+    expectedSegments: number;
+  }>({ totalWords: 0, segmentsReady: 0, expectedSegments: 0 });
+
+  const {
+    generateSegment,
+    generateBatchSegments,
+    cancelGeneration,
+    batchState,
+    getSegmentStatus,
+    generatePreview,
+    uploadPreviewedAudio,
+  } = useAdminAudioGenerator();
+  const { isPlaying } = useSupabaseAudio();
+
+  // Load global stats (total words and segment counts) - uses COUNT queries
+  const loadGlobalStats = useCallback(async () => {
+    try {
+      const voiceId = getVoiceId();
+      const [wordCount, segmentCounts] = await Promise.all([
+        getWordCount(),
+        getSegmentCounts(voiceId),
+      ]);
+
+      // Expected segments = words * 3 (word, definition, sentence)
+      // Note: some words may not have example sentences, but we count max potential
+      setGlobalStats({
+        totalWords: wordCount,
+        segmentsReady: segmentCounts.total,
+        expectedSegments: wordCount * 3,
+      });
+    } catch (err) {
+      console.error('[AdminAudio] Error loading global stats:', err);
     }
-    // Sort alphabetically
-    return words.sort((a, b) => a.word.localeCompare(b.word));
   }, []);
 
-  // Filter words by grade
-  const filteredWords = useMemo(() => {
-    if (gradeFilter === 'all') return allWords;
-    return allWords.filter((w) => w.grade === gradeFilter);
-  }, [allWords, gradeFilter]);
+  // Load words from Supabase with pagination and server-side filtering
+  const loadWords = useCallback(async () => {
+    setIsLoading(true);
+    setDataError(null);
+    try {
+      const result = await getWordsPaginated({
+        gradeLevel: gradeFilter === 'all' ? undefined : (gradeFilter as GradeLevel),
+        page,
+        pageSize: PAGE_SIZE,
+        search: searchQuery,
+      });
+
+      if (result.total === 0 && gradeFilter === 'all' && !searchQuery) {
+        setDataError('No words found. Please ensure Supabase is configured and the words table is populated.');
+        setWords([]);
+        setTotalPages(0);
+        setTotalWords(0);
+        return;
+      }
+
+      setWords(result.words.map(w => ({
+        word: w.word,
+        definition: w.definition,
+        example: w.example || undefined,
+        grade: Number(w.grade_level),
+        id: w.id,
+      })));
+      setTotalPages(result.totalPages);
+      setTotalWords(result.total);
+    } catch (err) {
+      console.error('[AdminAudio] Error loading words:', err);
+      setDataError('Failed to load words from database.');
+      setWords([]);
+      setTotalPages(0);
+      setTotalWords(0);
+    } finally {
+      setIsLoading(false);
+    }
+  }, [gradeFilter, page, searchQuery]);
 
   // Load audio status from Supabase
-  const loadAudioStatus = async () => {
+  const loadAudioStatus = useCallback(async () => {
+    if (words.length === 0) return;
+
     setIsLoading(true);
     try {
       const voiceId = getVoiceId();
-      const wordStrings = allWords.map((w) => w.word);
-      const status = await getAudioForWords(wordStrings, voiceId);
-      setAudioStatus(status);
+      const wordStrings = words.map((w) => w.word);
+      const segments = await getAudioSegmentsForWords(wordStrings, voiceId);
+      setAudioSegments(segments);
     } catch (err) {
       console.error('[AdminAudio] Error loading status:', err);
     } finally {
       setIsLoading(false);
     }
-  };
+  }, [words]);
 
+  // Load global stats on mount
+  useEffect(() => {
+    loadGlobalStats();
+  }, [loadGlobalStats]);
+
+  // Reset to page 0 when filter or search changes
+  useEffect(() => {
+    setPage(0);
+  }, [gradeFilter, searchQuery]);
+
+  // Load words when component mounts or pagination/filter/search changes
+  useEffect(() => {
+    loadWords();
+  }, [loadWords]);
+
+  // Load audio status when words change
   useEffect(() => {
     loadAudioStatus();
-  }, []);
+  }, [loadAudioStatus]);
 
-  // Get word audio status
-  const getWordAudioStatus = (word: string): WordAudioStatus => {
-    const normalized = normalizeWord(word);
-    const pronunciation = audioStatus.get(normalized);
-    const wordDef = allWords.find((w) => w.word === word);
-    return {
-      word,
-      grade: wordDef?.grade || 3,
-      hasAudio: !!pronunciation,
-      pronunciation,
+  // Debounce search input
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      setSearchQuery(searchInput);
+    }, 300);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
     };
+  }, [searchInput]);
+
+  // Words are already filtered by server, just sort them for display
+  const displayWords = useMemo(() => {
+    return [...words].sort((a, b) => a.word.localeCompare(b.word));
+  }, [words]);
+
+  // Compute selectedWordData and selectedWordIndex from selectedWord string
+  const selectedWordData = selectedWord
+    ? displayWords.find(w => w.word === selectedWord) ?? null
+    : null;
+
+  const selectedWordIndex = selectedWord
+    ? displayWords.findIndex(w => w.word === selectedWord)
+    : -1;
+
+  // Get segment status for a word
+  const getWordSegments = useCallback(
+    (word: string, example?: string): { word: SegmentAudioStatus; definition: SegmentAudioStatus; sentence: SegmentAudioStatus } => {
+      const normalized = normalizeWord(word);
+
+      const getStatus = (segType: AudioSegmentType): SegmentAudioStatus => {
+        const key = getSegmentKey(normalized, segType);
+        const pronunciation = audioSegments.get(key);
+        const genStatus = getSegmentStatus(word, segType);
+
+        return {
+          hasAudio: !!pronunciation,
+          pronunciation,
+          isGenerating: genStatus?.status === 'generating' || genStatus?.status === 'uploading',
+          error: genStatus?.status === 'error' ? genStatus.error : undefined,
+        };
+      };
+
+      return {
+        word: getStatus('word'),
+        definition: getStatus('definition'),
+        sentence: example ? getStatus('sentence') : { hasAudio: false },
+      };
+    },
+    [audioSegments, getSegmentStatus]
+  );
+
+  // Count segments with/without audio for current page (local stats)
+  const pageStats = useMemo(() => {
+    let totalSegments = 0;
+    let hasAudio = 0;
+
+    for (const word of words) {
+      const segments = getWordSegments(word.word, word.example);
+      totalSegments += 2; // word + definition always
+      if (word.example) totalSegments += 1; // sentence if exists
+
+      if (segments.word.hasAudio) hasAudio++;
+      if (segments.definition.hasAudio) hasAudio++;
+      if (word.example && segments.sentence.hasAudio) hasAudio++;
+    }
+
+    return { totalWords: words.length, totalSegments, hasAudio, missing: totalSegments - hasAudio };
+  }, [words, getWordSegments]);
+
+  // Global stats for display (from COUNT queries)
+  const stats = useMemo(() => ({
+    totalWords: globalStats.totalWords,
+    segmentsReady: globalStats.segmentsReady,
+    missing: globalStats.expectedSegments - globalStats.segmentsReady,
+  }), [globalStats]);
+
+  // Handle playing a segment
+  const handlePlaySegment = async (word: string, segmentType: AudioSegmentType) => {
+    if (isPlaying) return;
+
+    const normalized = normalizeWord(word);
+    const key = getSegmentKey(normalized, segmentType);
+    const pronunciation = audioSegments.get(key);
+
+    if (!pronunciation) return;
+
+    setPlayingSegment(`${word}:${segmentType}`);
+    try {
+      let url = getAudioPublicUrl(pronunciation.storage_path);
+      if (url) {
+        // Add cache-busting timestamp if segment was recently regenerated
+        const cacheBustKey = `${word}:${segmentType}`;
+        const cacheBustTime = cacheBustTimestamps.get(cacheBustKey);
+        if (cacheBustTime) {
+          url = `${url}?t=${cacheBustTime}`;
+        }
+
+        const audio = new Audio(url);
+        await audio.play();
+        await new Promise((resolve) => {
+          audio.onended = resolve;
+          audio.onerror = resolve;
+        });
+      }
+    } finally {
+      setPlayingSegment(null);
+    }
   };
 
-  // Count words with/without audio
-  const stats = useMemo(() => {
-    const total = filteredWords.length;
-    let hasAudio = 0;
-    for (const word of filteredWords) {
-      if (audioStatus.has(normalizeWord(word.word))) {
-        hasAudio++;
+  // Handle generating a segment
+  const handleGenerateSegment = async (
+    word: string,
+    segmentType: AudioSegmentType,
+    textContent: string,
+    overrides?: { volume?: number; emotion?: string; speed?: number }
+  ) => {
+    const result = await generateSegment(word, segmentType, textContent, overrides);
+    if (result.success) {
+      // Record timestamp for cache busting when playing this segment
+      const cacheBustKey = `${word}:${segmentType}`;
+      setCacheBustTimestamps((prev) => new Map(prev).set(cacheBustKey, Date.now()));
+
+      await loadAudioStatus();
+      await loadGlobalStats();
+    }
+  };
+
+  // Handle generating a preview (in-memory, no upload)
+  const handleGeneratePreview = async (
+    text: string,
+    overrides?: { volume?: number; emotion?: string; speed?: number }
+  ) => {
+    return generatePreview(text, overrides);
+  };
+
+  // Handle saving a previewed audio blob
+  const handleSavePreviewedAudio = async (
+    word: string,
+    segmentType: AudioSegmentType,
+    textContent: string,
+    blob: Blob,
+    overrides?: { volume?: number; emotion?: string; speed?: number }
+  ) => {
+    const result = await uploadPreviewedAudio(word, segmentType, textContent, blob, overrides);
+    if (result.success) {
+      // Record timestamp for cache busting when playing this segment
+      const cacheBustKey = `${word}:${segmentType}`;
+      setCacheBustTimestamps((prev) => new Map(prev).set(cacheBustKey, Date.now()));
+
+      await loadAudioStatus();
+      await loadGlobalStats();
+    }
+    return result;
+  };
+
+  // Handle batch generation (generates for current page only)
+  const handleGenerateAllMissing = async () => {
+    // Find words with missing segments on current page
+    const wordsToGenerate: WordDefinition[] = [];
+
+    for (const word of displayWords) {
+      const segments = getWordSegments(word.word, word.example);
+      const hasMissing =
+        !segments.word.hasAudio ||
+        !segments.definition.hasAudio ||
+        (word.example && !segments.sentence.hasAudio);
+
+      if (hasMissing) {
+        wordsToGenerate.push(word);
       }
     }
-    return { total, hasAudio, missing: total - hasAudio };
-  }, [filteredWords, audioStatus]);
 
-  // Handle single word generation
-  const handleGenerateWord = async (word: string) => {
-    const result = await generateWord(word);
-    if (result.success) {
-      // Refresh audio status
-      loadAudioStatus();
-    }
-  };
-
-  // Handle batch generation
-  const handleGenerateAll = async () => {
-    const missingWords = filteredWords
-      .filter((w) => !audioStatus.has(normalizeWord(w.word)))
-      .map((w) => w.word);
-
-    if (missingWords.length === 0) {
-      alert('All words already have audio!');
+    if (wordsToGenerate.length === 0) {
+      alert('All segments on this page already have audio!');
       return;
     }
 
-    if (!confirm(`Generate audio for ${missingWords.length} words? This may take a while.`)) {
+    if (!confirm(`Generate audio for ${wordsToGenerate.length} words (up to ${pageStats.missing} segments) on this page? This may take a while.`)) {
       return;
     }
 
-    await generateBatch(missingWords);
-    loadAudioStatus();
+    await generateBatchSegments(wordsToGenerate);
+    await loadAudioStatus();
+    await loadGlobalStats();
   };
 
-  // Handle playing audio
-  const handlePlayWord = async (word: string) => {
-    if (isPlaying) return;
-    setPlayingWord(word);
-    try {
-      await playFromSupabase(word);
-    } finally {
-      setPlayingWord(null);
+  // Handle word added
+  const handleWordAdded = () => {
+    loadWords();
+    loadGlobalStats();
+  };
+
+  // Handle refresh
+  const handleRefresh = () => {
+    loadWords();
+    loadGlobalStats();
+  };
+
+  // Get ready count for a word's segments
+  const getReadyCount = (word: WordWithGrade): { ready: number; total: number } => {
+    const segments = getWordSegments(word.word, word.example);
+    const total = word.example ? 3 : 2;
+    let ready = 0;
+    if (segments.word.hasAudio) ready++;
+    if (segments.definition.hasAudio) ready++;
+    if (word.example && segments.sentence.hasAudio) ready++;
+    return { ready, total };
+  };
+
+  // Handle dialog navigation
+  const handleDialogNavigate = (direction: 'prev' | 'next') => {
+    if (selectedWordIndex === -1) return;
+    if (direction === 'prev' && selectedWordIndex > 0) {
+      setSelectedWord(displayWords[selectedWordIndex - 1].word);
+    } else if (direction === 'next' && selectedWordIndex < displayWords.length - 1) {
+      setSelectedWord(displayWords[selectedWordIndex + 1].word);
     }
   };
 
@@ -140,7 +409,7 @@ export function AdminAudioScreen() {
           Audio Pronunciation Management
         </h1>
         <p className="text-gray-600 mt-1">
-          Generate and manage pre-recorded pronunciations for spelling words
+          Generate and manage pronunciations for words, definitions, and example sentences
         </p>
       </div>
 
@@ -149,20 +418,46 @@ export function AdminAudioScreen() {
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="flex items-center gap-6">
             <div>
-              <span className="text-sm text-gray-500">Total Words</span>
-              <p className="text-2xl font-bold text-gray-900">{stats.total}</p>
+              <span className="text-sm text-gray-500">Words</span>
+              <p className="text-2xl font-bold text-gray-900">{stats.totalWords}</p>
             </div>
             <div>
-              <span className="text-sm text-gray-500">With Audio</span>
-              <p className="text-2xl font-bold text-green-600">{stats.hasAudio}</p>
+              <span className="text-sm text-gray-500">Segments Ready</span>
+              <p className="text-2xl font-bold text-green-600">{stats.segmentsReady}</p>
             </div>
             <div>
               <span className="text-sm text-gray-500">Missing</span>
               <p className="text-2xl font-bold text-amber-600">{stats.missing}</p>
             </div>
+            {!dataError && words.length > 0 && (
+              <div className="px-2 py-1 bg-blue-50 text-blue-700 text-xs rounded-full">
+                Supabase
+              </div>
+            )}
           </div>
 
           <div className="flex items-center gap-3">
+            {/* Add word button */}
+            <button
+              onClick={() => setIsAddModalOpen(true)}
+              className="px-3 py-2 text-blue-600 hover:bg-blue-50 rounded-lg transition-colors flex items-center gap-2 text-sm font-medium"
+            >
+              <Plus size={16} />
+              Add Word
+            </button>
+
+            {/* Search input */}
+            <div className="relative">
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-gray-400" />
+              <input
+                type="text"
+                value={searchInput}
+                onChange={(e) => setSearchInput(e.target.value)}
+                placeholder="Search words..."
+                className="pl-9 pr-3 py-1.5 border border-gray-300 rounded-lg text-sm focus:ring-2 focus:ring-blue-500 focus:border-blue-500 w-40"
+              />
+            </div>
+
             {/* Grade filter */}
             <div className="flex items-center gap-2">
               <Filter size={16} className="text-gray-400" />
@@ -185,7 +480,7 @@ export function AdminAudioScreen() {
 
             {/* Refresh button */}
             <button
-              onClick={loadAudioStatus}
+              onClick={handleRefresh}
               disabled={isLoading}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               title="Refresh"
@@ -195,8 +490,8 @@ export function AdminAudioScreen() {
 
             {/* Generate all button */}
             <button
-              onClick={handleGenerateAll}
-              disabled={batchState.isGenerating || stats.missing === 0}
+              onClick={handleGenerateAllMissing}
+              disabled={batchState.isGenerating || pageStats.missing === 0}
               className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:bg-blue-400 transition-colors flex items-center gap-2 text-sm font-medium"
             >
               {batchState.isGenerating ? (
@@ -207,13 +502,24 @@ export function AdminAudioScreen() {
               ) : (
                 <>
                   <Volume2 size={16} />
-                  Generate All Missing
+                  Generate Missing
                 </>
               )}
             </button>
           </div>
         </div>
       </div>
+
+      {/* Error display */}
+      {dataError && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
+          <div className="flex items-center gap-2 text-red-700">
+            <AlertCircle size={20} />
+            <span className="font-medium">Data Error</span>
+          </div>
+          <p className="mt-1 text-sm text-red-600">{dataError}</p>
+        </div>
+      )}
 
       {/* Batch generation progress */}
       {(batchState.isGenerating || batchState.totalWords > 0) && (
@@ -239,24 +545,24 @@ export function AdminAudioScreen() {
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
                     <Loader2 size={24} className="animate-spin mx-auto mb-2" />
-                    Loading audio status...
+                    Loading...
                   </td>
                 </tr>
-              ) : filteredWords.length === 0 ? (
+              ) : displayWords.length === 0 ? (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
-                    No words found
+                    {dataError ? 'Unable to load words' : searchQuery ? 'No words match your search' : 'No words found'}
                   </td>
                 </tr>
               ) : (
-                filteredWords.map((wordDef) => {
-                  const status = getWordAudioStatus(wordDef.word);
-                  const genStatus = getWordStatus(wordDef.word);
-                  const isGenerating =
-                    genStatus?.status === 'generating' || genStatus?.status === 'uploading';
-
+                displayWords.map((wordDef) => {
+                  const { ready, total } = getReadyCount(wordDef);
                   return (
-                    <tr key={wordDef.word} className="hover:bg-gray-50">
+                    <tr
+                      key={wordDef.word}
+                      className="hover:bg-gray-50 cursor-pointer"
+                      onClick={() => setSelectedWord(wordDef.word)}
+                    >
                       <td className="px-4 py-3">
                         <span className="font-medium text-gray-900">{wordDef.word}</span>
                       </td>
@@ -264,56 +570,20 @@ export function AdminAudioScreen() {
                         <span className="text-sm text-gray-600">Grade {wordDef.grade}</span>
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {status.hasAudio ? (
-                          <span className="inline-flex items-center gap-1 text-green-600">
-                            <Check size={16} />
-                            <span className="text-sm">Ready</span>
-                          </span>
-                        ) : isGenerating ? (
-                          <span className="inline-flex items-center gap-1 text-blue-600">
-                            <Loader2 size={16} className="animate-spin" />
-                            <span className="text-sm">
-                              {genStatus?.status === 'uploading' ? 'Uploading' : 'Generating'}
-                            </span>
-                          </span>
-                        ) : genStatus?.status === 'error' ? (
-                          <span className="inline-flex items-center gap-1 text-red-600" title={genStatus.error}>
-                            <X size={16} />
-                            <span className="text-sm">Error</span>
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1 text-amber-600">
-                            <X size={16} />
-                            <span className="text-sm">Missing</span>
-                          </span>
-                        )}
+                        <span
+                          className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium ${
+                            ready === total
+                              ? 'bg-green-100 text-green-700'
+                              : ready > 0
+                                ? 'bg-amber-100 text-amber-700'
+                                : 'bg-gray-100 text-gray-600'
+                          }`}
+                        >
+                          {ready}/{total} ready
+                        </span>
                       </td>
                       <td className="px-4 py-3 text-right">
-                        <div className="flex items-center justify-end gap-2">
-                          {status.hasAudio && (
-                            <button
-                              onClick={() => handlePlayWord(wordDef.word)}
-                              disabled={isPlaying}
-                              className="p-1.5 text-blue-600 hover:bg-blue-50 rounded transition-colors"
-                              title="Play"
-                            >
-                              {playingWord === wordDef.word ? (
-                                <Loader2 size={16} className="animate-spin" />
-                              ) : (
-                                <Play size={16} />
-                              )}
-                            </button>
-                          )}
-                          {!status.hasAudio && !isGenerating && (
-                            <button
-                              onClick={() => handleGenerateWord(wordDef.word)}
-                              disabled={batchState.isGenerating}
-                              className="px-3 py-1 text-sm bg-blue-600 text-white rounded hover:bg-blue-700 disabled:bg-blue-400 transition-colors"
-                            >
-                              Generate
-                            </button>
-                          )}
-                        </div>
+                        <span className="text-sm text-gray-400">Click to view</span>
                       </td>
                     </tr>
                   );
@@ -322,7 +592,73 @@ export function AdminAudioScreen() {
             </tbody>
           </table>
         </div>
+
+        {/* Pagination controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-200 bg-gray-50">
+            <div className="text-sm text-gray-600">
+              Page {page + 1} of {totalPages} ({totalWords} words{searchQuery && ` matching "${searchQuery}"`})
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={() => setPage(p => Math.max(0, p - 1))}
+                disabled={page === 0 || isLoading}
+                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Previous page"
+              >
+                <ChevronLeft size={18} />
+              </button>
+              <span className="text-sm text-gray-600 min-w-[60px] text-center">
+                {page + 1} / {totalPages}
+              </span>
+              <button
+                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
+                disabled={page >= totalPages - 1 || isLoading}
+                className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                title="Next page"
+              >
+                <ChevronRight size={18} />
+              </button>
+            </div>
+          </div>
+        )}
       </div>
+
+      {/* Add Word Modal */}
+      <AddWordModal
+        isOpen={isAddModalOpen}
+        onClose={() => setIsAddModalOpen(false)}
+        onWordAdded={handleWordAdded}
+        defaultGrade={gradeFilter === 'all' ? 4 : gradeFilter}
+      />
+
+      {/* Word Detail Dialog */}
+      <WordDetailDialog
+        isOpen={selectedWord !== null}
+        onClose={() => {
+          setSelectedWord(null);
+          loadAudioStatus(); // Refresh table when dialog closes
+        }}
+        word={selectedWordData}
+        wordIndex={selectedWordIndex !== -1 ? selectedWordIndex : 0}
+        totalWords={displayWords.length}
+        onNavigate={handleDialogNavigate}
+        onWordUpdated={() => {
+          loadWords();
+        }}
+        segments={
+          selectedWordData
+            ? getWordSegments(selectedWordData.word, selectedWordData.example)
+            : { word: { hasAudio: false }, definition: { hasAudio: false }, sentence: { hasAudio: false } }
+        }
+        onPlaySegment={handlePlaySegment}
+        onGenerateSegment={handleGenerateSegment}
+        onGeneratePreview={handleGeneratePreview}
+        onSavePreviewedAudio={handleSavePreviewedAudio}
+        isPlaying={isPlaying}
+        playingSegment={playingSegment}
+        isGeneratingAny={batchState.isGenerating}
+      />
     </div>
   );
 }
