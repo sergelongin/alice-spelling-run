@@ -14,10 +14,12 @@ import {
   Flower2,
   Trophy,
   Rocket,
+  Volume2,
 } from 'lucide-react';
 import { Word, WordAttempt, GameModeId, MASTERY_INTERVALS } from '@/types';
 import { getWordState, WordState } from '@/utils/wordSelection';
 import { Button } from './Button';
+import { useTextToSpeech } from '@/hooks/useTextToSpeech';
 
 interface WordDetailModalProps {
   word: Word | null;
@@ -150,6 +152,8 @@ export function WordDetailModal({
   onArchive,
   onUnarchive,
 }: WordDetailModalProps) {
+  const { speak, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech();
+
   // Calculate stats from attempt history
   const stats = useMemo(() => {
     if (!word) return null;
@@ -187,6 +191,20 @@ export function WordDetailModal({
         <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-blue-50 to-purple-50">
           <div className="flex items-center gap-3">
             <h2 className="text-2xl font-bold text-gray-800 capitalize">{word.text}</h2>
+            {isTTSSupported && (
+              <button
+                onClick={() => speak(word.text)}
+                disabled={isSpeaking}
+                className={`p-2 rounded-full transition-colors ${
+                  isSpeaking
+                    ? 'bg-blue-200 text-blue-600'
+                    : 'bg-blue-100 text-blue-600 hover:bg-blue-200'
+                }`}
+                aria-label={`Pronounce ${word.text}`}
+              >
+                <Volume2 size={18} className={isSpeaking ? 'animate-pulse' : ''} />
+              </button>
+            )}
             {renderStateBadge(state, isActive)}
           </div>
           <button

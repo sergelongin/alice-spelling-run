@@ -181,6 +181,22 @@ supabase projects list
 - Stored in `.env` as `VITE_SUPABASE_DBPASSWPRD`
 - Use `$VITE_SUPABASE_DBPASSWPRD` in shell commands (load with `source .env`)
 
+**Query Best Practices:**
+- PostgREST has a **1,000 row server limit** - client `.limit()` cannot override this
+- For large datasets, use **pagination** (`getWordsPaginated()`) not full fetches
+- Use **COUNT queries** (`{ count: 'exact', head: true }`) for stats - no data returned
+- Fetch related data **only for visible rows** (e.g., audio status for current page only)
+
+**Query Pagination:**
+- `.range(from, to)` - server-side pagination (preferred for large datasets)
+- `.limit(count)` - only works within server limits (~1,000 rows)
+
+**Key Paginated/Count Functions:**
+- `getWordsPaginated()`: Server-side pagination with search support
+- `getWordCount()`: Efficient COUNT query without fetching data
+- `getSegmentCounts()`: COUNT query for audio segments
+- `getAudioSegmentsForWords()`: Fetch audio for specific words (use for current page only)
+
 ### Learning System
 - **Spaced Repetition**: Leitner-based system with mastery levels 0-5 (`src/utils/wordSelection.ts`)
 - **Gradual Introduction**: Max 2 new words/session, 10/day, pauses if 15+ struggling
