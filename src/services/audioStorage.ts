@@ -4,7 +4,13 @@
  */
 
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { AudioPronunciation, AudioStorageMetadata, AudioAvailability } from '@/types/audio';
+import type {
+  AudioPronunciation,
+  AudioStorageMetadata,
+  AudioAvailability,
+  AudioSegmentType,
+  AudioSegmentMetadata,
+} from '@/types/audio';
 
 const STORAGE_BUCKET = 'pronunciations';
 
@@ -18,19 +24,33 @@ export function normalizeWord(word: string): string {
 
 /**
  * Generate storage path for a word's audio file
+ * Format: words/{voice_id}/{word_normalized}/{segment_type}.wav
+ */
+export function getStoragePath(
+  word: string,
+  voiceId: string,
+  segmentType: AudioSegmentType = 'word'
+): string {
+  const normalized = normalizeWord(word);
+  return `words/${voiceId}/${normalized}/${segmentType}.wav`;
+}
+
+/**
+ * Legacy storage path format (for backwards compatibility)
  * Format: words/{voice_id}/{word_normalized}.wav
  */
-export function getStoragePath(word: string, voiceId: string): string {
+export function getLegacyStoragePath(word: string, voiceId: string): string {
   const normalized = normalizeWord(word);
   return `words/${voiceId}/${normalized}.wav`;
 }
 
 /**
- * Check if audio exists in Supabase for a given word
+ * Check if audio exists in Supabase for a given word and segment
  */
 export async function checkAudioAvailability(
   word: string,
-  voiceId: string
+  voiceId: string,
+  segmentType: AudioSegmentType = 'word'
 ): Promise<AudioAvailability> {
   if (!isSupabaseConfigured()) {
     return { exists: false };
@@ -44,6 +64,7 @@ export async function checkAudioAvailability(
     .select('*')
     .eq('word_normalized', wordNormalized)
     .eq('voice_id', voiceId)
+    .eq('segment_type', segmentType)
     .single();
 
   if (error || !pronunciation) {
@@ -95,9 +116,35 @@ export async function downloadAudio(storagePath: string): Promise<Blob | null> {
 /**
  * Upload audio file to Supabase Storage and create metadata record
  * Only super_admin can upload (enforced by RLS)
+ * Legacy function for backwards compatibility - uses 'word' segment type
  */
 export async function uploadAudio(
   metadata: AudioStorageMetadata,
+  audioBlob: Blob
+): Promise<{ success: boolean; error?: string }> {
+  // Convert to segment metadata format
+  const segmentMetadata: AudioSegmentMetadata = {
+    word: metadata.word,
+    wordNormalized: metadata.wordNormalized,
+    segmentType: 'word',
+    textContent: metadata.word,
+    voiceId: metadata.voiceId,
+    emotion: metadata.emotion,
+    speed: metadata.speed,
+    storagePath: metadata.storagePath,
+    fileSizeBytes: metadata.fileSizeBytes,
+    durationMs: metadata.durationMs,
+  };
+  return uploadSegmentAudio(segmentMetadata, audioBlob);
+}
+
+/**
+ * Upload audio segment to Supabase Storage and create metadata record
+ * Supports word, definition, and sentence segments
+ * Only super_admin can upload (enforced by RLS)
+ */
+export async function uploadSegmentAudio(
+  metadata: AudioSegmentMetadata,
   audioBlob: Blob
 ): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) {
@@ -118,7 +165,9 @@ export async function uploadAudio(
       return { success: false, error: uploadError.message };
     }
 
-    // Create or update metadata record
+    // Create or update metadata record with segment_type
+    // Use storage_path for onConflict since it's a unique constraint and is deterministically
+    // derived from word/voice/segment - this avoids conflict with the composite unique constraint
     const { error: dbError } = await supabase.from('audio_pronunciations').upsert(
       {
         word: metadata.word,
@@ -126,12 +175,15 @@ export async function uploadAudio(
         voice_id: metadata.voiceId,
         emotion: metadata.emotion,
         speed: metadata.speed,
+        volume: metadata.volume ?? 1.0,
         storage_path: metadata.storagePath,
         file_size_bytes: metadata.fileSizeBytes,
         duration_ms: metadata.durationMs,
+        segment_type: metadata.segmentType,
+        text_content: metadata.textContent,
       },
       {
-        onConflict: 'word_normalized,voice_id,emotion,speed',
+        onConflict: 'storage_path',
       }
     );
 
@@ -150,18 +202,19 @@ export async function uploadAudio(
 }
 
 /**
- * Delete audio file and its metadata
+ * Delete audio file and its metadata for a specific segment
  * Only super_admin can delete (enforced by RLS)
  */
 export async function deleteAudio(
   word: string,
-  voiceId: string
+  voiceId: string,
+  segmentType: AudioSegmentType = 'word'
 ): Promise<{ success: boolean; error?: string }> {
   if (!isSupabaseConfigured()) {
     return { success: false, error: 'Supabase not configured' };
   }
 
-  const storagePath = getStoragePath(word, voiceId);
+  const storagePath = getStoragePath(word, voiceId, segmentType);
 
   try {
     // Delete from storage
@@ -178,7 +231,8 @@ export async function deleteAudio(
       .from('audio_pronunciations')
       .delete()
       .eq('word_normalized', normalizeWord(word))
-      .eq('voice_id', voiceId);
+      .eq('voice_id', voiceId)
+      .eq('segment_type', segmentType);
 
     if (dbError) {
       console.error('[AudioStorage] DB delete error:', dbError);
@@ -193,18 +247,52 @@ export async function deleteAudio(
 }
 
 /**
+ * Delete all audio segments for a word
+ */
+export async function deleteAllSegments(
+  word: string,
+  voiceId: string
+): Promise<{ success: boolean; error?: string }> {
+  const segments: AudioSegmentType[] = ['word', 'definition', 'sentence'];
+  const errors: string[] = [];
+
+  for (const segment of segments) {
+    const result = await deleteAudio(word, voiceId, segment);
+    if (!result.success && result.error) {
+      errors.push(`${segment}: ${result.error}`);
+    }
+  }
+
+  if (errors.length > 0) {
+    return { success: false, error: errors.join('; ') };
+  }
+
+  return { success: true };
+}
+
+/**
  * Get all audio pronunciations for a voice
  */
-export async function getAudioForVoice(voiceId: string): Promise<AudioPronunciation[]> {
+export async function getAudioForVoice(
+  voiceId: string,
+  segmentType?: AudioSegmentType
+): Promise<AudioPronunciation[]> {
   if (!isSupabaseConfigured()) {
     return [];
   }
 
-  const { data, error } = await supabase
+  let query = supabase
     .from('audio_pronunciations')
     .select('*')
     .eq('voice_id', voiceId)
-    .order('word', { ascending: true });
+    .order('word', { ascending: true })
+    .limit(5000); // Support up to ~1,667 words × 3 segments each
+
+  if (segmentType) {
+    query = query.eq('segment_type', segmentType);
+  }
+
+  const { data, error } = await query;
 
   if (error) {
     console.error('[AudioStorage] Error fetching audio:', error);
@@ -215,7 +303,7 @@ export async function getAudioForVoice(voiceId: string): Promise<AudioPronunciat
 }
 
 /**
- * Get audio pronunciation records for multiple words
+ * Get audio pronunciation records for multiple words (legacy - word segment only)
  */
 export async function getAudioForWords(
   words: string[],
@@ -231,7 +319,9 @@ export async function getAudioForWords(
     .from('audio_pronunciations')
     .select('*')
     .eq('voice_id', voiceId)
-    .in('word_normalized', normalizedWords);
+    .eq('segment_type', 'word')
+    .in('word_normalized', normalizedWords)
+    .limit(2000); // Support word bank growth beyond current 639 words
 
   if (error) {
     console.error('[AudioStorage] Error fetching audio:', error);
@@ -247,17 +337,94 @@ export async function getAudioForWords(
 }
 
 /**
+ * Key format for segment map: `${word_normalized}:${segment_type}`
+ */
+export function getSegmentKey(wordNormalized: string, segmentType: AudioSegmentType): string {
+  return `${wordNormalized}:${segmentType}`;
+}
+
+/**
+ * Get all audio segments for multiple words
+ * Returns a map keyed by `${word_normalized}:${segment_type}`
+ */
+export async function getAudioSegmentsForWords(
+  words: string[],
+  voiceId: string
+): Promise<Map<string, AudioPronunciation>> {
+  if (!isSupabaseConfigured() || words.length === 0) {
+    return new Map();
+  }
+
+  const normalizedWords = words.map(normalizeWord);
+
+  const { data, error } = await supabase
+    .from('audio_pronunciations')
+    .select('*')
+    .eq('voice_id', voiceId)
+    .in('word_normalized', normalizedWords)
+    .limit(5000); // Support up to ~1,667 words × 3 segments each
+
+  if (error) {
+    console.error('[AudioStorage] Error fetching audio segments:', error);
+    return new Map();
+  }
+
+  const result = new Map<string, AudioPronunciation>();
+  for (const pronunciation of data || []) {
+    const key = getSegmentKey(
+      pronunciation.word_normalized,
+      pronunciation.segment_type as AudioSegmentType
+    );
+    result.set(key, pronunciation as AudioPronunciation);
+  }
+
+  return result;
+}
+
+/**
+ * Count segments for a set of words
+ * Returns { word_normalized: { word: boolean, definition: boolean, sentence: boolean } }
+ */
+export async function getSegmentStatusForWords(
+  words: string[],
+  voiceId: string
+): Promise<Map<string, Record<AudioSegmentType, boolean>>> {
+  const segments = await getAudioSegmentsForWords(words, voiceId);
+  const result = new Map<string, Record<AudioSegmentType, boolean>>();
+
+  for (const word of words) {
+    const normalized = normalizeWord(word);
+    result.set(normalized, {
+      word: segments.has(getSegmentKey(normalized, 'word')),
+      definition: segments.has(getSegmentKey(normalized, 'definition')),
+      sentence: segments.has(getSegmentKey(normalized, 'sentence')),
+    });
+  }
+
+  return result;
+}
+
+/**
  * Get count of audio files for a voice
  */
-export async function getAudioCount(voiceId: string): Promise<number> {
+export async function getAudioCount(
+  voiceId: string,
+  segmentType?: AudioSegmentType
+): Promise<number> {
   if (!isSupabaseConfigured()) {
     return 0;
   }
 
-  const { count, error } = await supabase
+  let query = supabase
     .from('audio_pronunciations')
     .select('*', { count: 'exact', head: true })
     .eq('voice_id', voiceId);
+
+  if (segmentType) {
+    query = query.eq('segment_type', segmentType);
+  }
+
+  const { count, error } = await query;
 
   if (error) {
     console.error('[AudioStorage] Error counting audio:', error);
@@ -265,4 +432,28 @@ export async function getAudioCount(voiceId: string): Promise<number> {
   }
 
   return count || 0;
+}
+
+/**
+ * Get segment counts for all words
+ * Returns { total: number, bySegment: { word: number, definition: number, sentence: number } }
+ */
+export async function getSegmentCounts(voiceId: string): Promise<{
+  total: number;
+  bySegment: Record<AudioSegmentType, number>;
+}> {
+  const [wordCount, definitionCount, sentenceCount] = await Promise.all([
+    getAudioCount(voiceId, 'word'),
+    getAudioCount(voiceId, 'definition'),
+    getAudioCount(voiceId, 'sentence'),
+  ]);
+
+  return {
+    total: wordCount + definitionCount + sentenceCount,
+    bySegment: {
+      word: wordCount,
+      definition: definitionCount,
+      sentence: sentenceCount,
+    },
+  };
 }
