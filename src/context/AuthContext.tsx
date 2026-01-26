@@ -132,7 +132,8 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       .from('children')
       .select('*')
       .eq('parent_id', parentId)
-      .order('created_at', { ascending: true });
+      .order('created_at', { ascending: true })
+      .limit(100); // Reasonable limit for children per parent
 
     if (error) {
       console.error('[Auth] Error fetching children:', error);
@@ -541,10 +542,11 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
   // Computed role helpers
   const isSuperAdmin = state.profile?.role === 'super_admin';
   const isParent = state.profile?.role === 'parent';
+  const isParentOrSuperAdmin = isParent || isSuperAdmin;
   const hasChildren = state.children.length > 0;
-  const needsChildSetup = !!state.user && isParent && !hasChildren;
-  // Netflix-style: parents with children need to select a profile each session
-  const needsProfileSelection = !!state.user && isParent && hasChildren && !state.hasSelectedProfileThisSession;
+  const needsChildSetup = !!state.user && isParentOrSuperAdmin && !hasChildren;
+  // Netflix-style: parents/super_admins with children need to select a profile each session
+  const needsProfileSelection = !!state.user && isParentOrSuperAdmin && hasChildren && !state.hasSelectedProfileThisSession;
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -561,6 +563,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       clearProfileSelection,
       isSuperAdmin,
       isParent,
+      isParentOrSuperAdmin,
       hasChildren,
       needsChildSetup,
       needsProfileSelection,
@@ -579,6 +582,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       clearProfileSelection,
       isSuperAdmin,
       isParent,
+      isParentOrSuperAdmin,
       hasChildren,
       needsChildSetup,
       needsProfileSelection,

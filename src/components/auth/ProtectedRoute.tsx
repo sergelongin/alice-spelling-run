@@ -46,16 +46,16 @@ export function ProtectedRoute({
   skipProfileRequirement = false,
   redirectTo = '/login',
 }: ProtectedRouteProps) {
-  const { user, profile, isLoading, isValidating, isSuperAdmin, needsChildSetup, needsProfileSelection } = useAuth();
+  const { user, profile, isLoading, isSuperAdmin, needsChildSetup, needsProfileSelection } = useAuth();
   const location = useLocation();
 
-  // Show loading spinner while auth state is being determined OR if user exists but
-  // we're still validating (fetching profile/children). This prevents race condition
-  // where stale children data is used for redirect decisions during OAuth callback.
-  // CRITICAL: Also wait if user exists but profile is null - this happens during OAuth
-  // when the session is established but profile/children haven't been fetched yet.
-  // Without profile, we can't determine isParent, so needsChildSetup would be false.
-  if (isLoading || (user && isValidating) || (user && !profile)) {
+  // Show loading spinner only when:
+  // 1. isLoading: No cached data AND checking Supabase storage (initial cold start)
+  // 2. user && !profile: OAuth callback where session exists but profile not yet fetched
+  //
+  // We intentionally DON'T wait for isValidating when we have cached data.
+  // This enables stale-while-revalidate: render immediately with cache, validate silently.
+  if (isLoading || (user && !profile)) {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center gap-4">
         <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600" />
@@ -74,10 +74,12 @@ export function ProtectedRoute({
     return <Navigate to="/" replace />;
   }
 
-  // Super admins bypass child requirements
-  if (isSuperAdmin) {
+  // Super admins accessing admin routes bypass child requirements
+  // (admin routes don't need child context)
+  if (isSuperAdmin && location.pathname.startsWith('/admin')) {
     return <>{children}</>;
   }
+  // For all other routes, super admins go through normal parent flow
 
   // Parent needs child setup - redirect unless we're already on setup page
   if (needsChildSetup && location.pathname !== '/setup-child') {

@@ -23,7 +23,7 @@ import type { ChildProfile } from '@/types/auth';
  */
 export function ParentDashboardScreen() {
   const navigate = useNavigate();
-  const { children, isParent, hasChildren } = useAuth();
+  const { children, isParentOrSuperAdmin, hasChildren } = useAuth();
   const {
     isAuthorized,
     isPinModalOpen,
@@ -77,7 +77,7 @@ export function ParentDashboardScreen() {
   }
 
   // Redirect non-parents
-  if (!isParent || !hasChildren) {
+  if (!isParentOrSuperAdmin || !hasChildren) {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center">
         <p className="text-gray-600 mb-4">Parent Dashboard is only available for parent accounts with children.</p>

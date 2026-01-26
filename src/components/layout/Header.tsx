@@ -2,13 +2,12 @@ import { useState, useRef, useEffect } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Home, BookOpen, BarChart3, Volume2, LogOut, User, ChevronDown, Users, Settings, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { SuperAdminOnly } from '@/components/auth';
 import { ProfileAvatar } from '@/components/profiles';
 
 export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  const { user, profile, signOut, isSuperAdmin, isParent, hasChildren, activeChild, clearProfileSelection } = useAuth();
+  const { user, profile, signOut, isSuperAdmin, isParentOrSuperAdmin, hasChildren, activeChild, clearProfileSelection } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -130,25 +129,11 @@ export function Header() {
               </>
             )}
 
-            {/* Super admin link to admin section */}
-            <SuperAdminOnly>
-              {!isAdminRoute && (
-                <Link
-                  to="/admin/audio"
-                  title="Admin"
-                  className="flex items-center gap-2 px-3 lg:px-4 py-2 text-purple-600 hover:bg-purple-50 rounded-lg transition-colors"
-                >
-                  <Volume2 size={20} />
-                  <span className="hidden lg:inline">Admin</span>
-                </Link>
-              )}
-            </SuperAdminOnly>
-
             {/* Divider */}
             <div className="w-px h-6 bg-gray-200 mx-1" />
 
-            {/* Active child profile (for parents on non-admin routes) */}
-            {!isAdminRoute && !isSuperAdmin && isParent && hasChildren && activeChild && (
+            {/* Active child profile (for parents/super admins on non-admin routes) */}
+            {!isAdminRoute && isParentOrSuperAdmin && hasChildren && activeChild && (
               <button
                 onClick={handleSwitchProfile}
                 className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 rounded-lg transition-colors"
@@ -195,8 +180,8 @@ export function Header() {
                         </span>
                       )}
                     </div>
-                    {/* Parent Dashboard option for parents with children */}
-                    {isParent && hasChildren && (
+                    {/* Parent Dashboard option for parents/super admins with children */}
+                    {isParentOrSuperAdmin && hasChildren && (
                       <Link
                         to="/parent-dashboard"
                         onClick={() => setShowUserMenu(false)}
@@ -206,8 +191,8 @@ export function Header() {
                         Parent Dashboard
                       </Link>
                     )}
-                    {/* Switch Profile option for parents with children */}
-                    {isParent && hasChildren && (
+                    {/* Switch Profile option for parents/super admins with children */}
+                    {isParentOrSuperAdmin && hasChildren && (
                       <button
                         onClick={handleSwitchProfile}
                         className="w-full px-4 py-2 text-left text-sm text-gray-700 hover:bg-gray-50 flex items-center gap-2"
@@ -216,8 +201,8 @@ export function Header() {
                         Switch Profile
                       </button>
                     )}
-                    {/* Manage Profiles option for parents with children - redirects to parent dashboard */}
-                    {isParent && hasChildren && (
+                    {/* Manage Profiles option for parents/super admins with children - redirects to parent dashboard */}
+                    {isParentOrSuperAdmin && hasChildren && (
                       <Link
                         to="/parent-dashboard"
                         onClick={() => setShowUserMenu(false)}
@@ -226,6 +211,23 @@ export function Header() {
                         <Settings size={16} />
                         Manage Profiles
                       </Link>
+                    )}
+                    {/* Admin section for super admins */}
+                    {isSuperAdmin && (
+                      <>
+                        <div className="border-t border-gray-100 my-1" />
+                        <div className="px-4 py-1">
+                          <span className="text-xs font-medium text-gray-400 uppercase tracking-wider">Admin</span>
+                        </div>
+                        <Link
+                          to="/admin/audio"
+                          onClick={() => setShowUserMenu(false)}
+                          className="w-full px-4 py-2 text-left text-sm text-purple-600 hover:bg-purple-50 flex items-center gap-2"
+                        >
+                          <Volume2 size={16} />
+                          Audio Admin
+                        </Link>
+                      </>
                     )}
                     <button
                       onClick={handleSignOut}

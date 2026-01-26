@@ -9,7 +9,7 @@ import { ProfileAvatar, EditProfileModal, DeleteConfirmDialog } from '@/componen
 import { ChildSwitcher } from '@/components/parent/ChildSwitcher';
 import {
   QuickStatsDashboard,
-  LearningActivityChart,
+  ActivityHeatmap,
   StrugglingWordsPanel,
   ErrorPatternAnalysis,
   RecommendationsPanel,
@@ -18,7 +18,6 @@ import {
 import {
   getChildWordBank,
   getChildStatistics,
-  calculateAccuracy,
   countActiveWords,
   countMasteredWords,
   calculateStreak,
@@ -38,7 +37,7 @@ import { categorizeWordsByState } from '@/utils/wordSelection';
 export function ChildDetailScreen() {
   const { childId } = useParams<{ childId: string }>();
   const navigate = useNavigate();
-  const { children, isParent, hasChildren } = useAuth();
+  const { children, isParentOrSuperAdmin, hasChildren } = useAuth();
   const {
     isAuthorized,
     isPinModalOpen,
@@ -85,11 +84,6 @@ export function ChildDetailScreen() {
   const strugglingWords = useMemo(() =>
     getStrugglingWords(wordBank.words),
     [wordBank.words]
-  );
-
-  const overallAccuracy = useMemo(() =>
-    calculateAccuracy(wordBank),
-    [wordBank]
   );
 
   const streak = useMemo(() =>
@@ -178,7 +172,7 @@ export function ChildDetailScreen() {
   }
 
   // Redirect if not parent or no children
-  if (!isParent || !hasChildren) {
+  if (!isParentOrSuperAdmin || !hasChildren) {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center">
         <p className="text-gray-600 mb-4">Parent Dashboard is only available for parent accounts with children.</p>
@@ -263,26 +257,6 @@ export function ChildDetailScreen() {
             </Button>
           </div>
         </div>
-
-        {/* Quick stats inline */}
-        <div className="grid grid-cols-4 gap-4 mt-4 pt-4 border-t border-gray-100">
-          <div className="text-center">
-            <p className="text-2xl font-bold text-gray-800">{totalWords}</p>
-            <p className="text-xs text-gray-500">Words</p>
-          </div>
-          <div className="text-center">
-            <p className="text-2xl font-bold text-gray-800">{masteredCount}</p>
-            <p className="text-xs text-gray-500">Mastered</p>
-          </div>
-          <div className="text-center">
-            <p className="text-2xl font-bold text-gray-800">{overallAccuracy}%</p>
-            <p className="text-xs text-gray-500">Accuracy</p>
-          </div>
-          <div className="text-center">
-            <p className="text-2xl font-bold text-gray-800">{streak}</p>
-            <p className="text-xs text-gray-500">Day Streak</p>
-          </div>
-        </div>
       </div>
 
       {/* Main analytics content */}
@@ -291,12 +265,11 @@ export function ChildDetailScreen() {
         <QuickStatsDashboard
           totalWords={totalWords}
           masteredWords={masteredCount}
-          accuracy={overallAccuracy}
           streak={streak}
         />
 
-        {/* Learning Activity Chart */}
-        <LearningActivityChart words={wordBank.words} />
+        {/* Activity Heatmap */}
+        <ActivityHeatmap words={wordBank.words} />
 
         {/* Struggling Words Panel */}
         <div id="panel-struggling">

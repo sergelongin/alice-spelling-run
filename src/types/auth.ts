@@ -64,6 +64,7 @@ export interface AuthContextValue extends AuthState {
   // Role helpers
   isSuperAdmin: boolean;
   isParent: boolean;
+  isParentOrSuperAdmin: boolean;  // True for both parents and super_admins
   hasChildren: boolean;
   needsChildSetup: boolean;
   needsProfileSelection: boolean;  // True if user needs to select a profile this session
