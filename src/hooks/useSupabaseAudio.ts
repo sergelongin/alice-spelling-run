@@ -6,7 +6,7 @@
 import { useCallback, useRef, useState } from 'react';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { checkAudioAvailability, downloadAudio, getAudioPublicUrl } from '@/services/audioStorage';
-import { getCachedAudio, setCachedAudio } from '@/utils/audioCache';
+import { getCachedAudio, setCachedAudio, invalidateCacheEntry } from '@/utils/audioCache';
 
 // Voice ID from environment (same as Cartesia uses)
 const getVoiceId = (): string => {
@@ -94,20 +94,35 @@ export function useSupabaseAudio(): UseSupabaseAudioReturn {
     try {
       // 1. Check IndexedDB cache first
       const cached = await getCachedAudio(word, voiceId);
-      if (cached?.blobUrl) {
-        console.log('[SupabaseAudio] Playing from cache:', word);
-        await playAudioFromUrl(cached.blobUrl);
-        return true;
-      }
 
-      // 2. Check Supabase for pre-generated audio
+      // 2. Always check Supabase for current version (needed for cache validation)
       const availability = await checkAudioAvailability(word, voiceId);
       if (!availability.exists || !availability.pronunciation) {
         console.log('[SupabaseAudio] No audio available in Supabase for:', word);
         return false;
       }
 
-      // 3. Download and cache the audio
+      // 3. Validate cache freshness if we have a cached entry
+      if (cached) {
+        const serverUpdatedAt = availability.updatedAt
+          ? new Date(availability.updatedAt).getTime()
+          : 0;
+
+        // Check if server has newer audio (or if cached entry lacks serverUpdatedAt)
+        const cachedUpdatedAt = cached.entry.serverUpdatedAt || 0;
+        if (serverUpdatedAt > cachedUpdatedAt) {
+          console.log('[SupabaseAudio] Server has newer audio, invalidating cache:', word);
+          await invalidateCacheEntry(word, voiceId);
+        } else {
+          // Cache is still valid - use it
+          console.log('[SupabaseAudio] Playing from cache:', word);
+          await playAudioFromUrl(cached.blobUrl);
+          URL.revokeObjectURL(cached.blobUrl);
+          return true;
+        }
+      }
+
+      // 4. Download and cache the audio
       const storagePath = availability.pronunciation.storage_path;
       const blob = await downloadAudio(storagePath);
 
@@ -116,13 +131,17 @@ export function useSupabaseAudio(): UseSupabaseAudioReturn {
         return false;
       }
 
-      // Create blob URL and cache it
-      const blobUrl = URL.createObjectURL(blob);
-      await setCachedAudio(word, voiceId, blobUrl, storagePath);
+      // Cache the blob data with server timestamp
+      const serverUpdatedAt = availability.updatedAt
+        ? new Date(availability.updatedAt).getTime()
+        : Date.now();
+      await setCachedAudio(word, voiceId, blob, storagePath, serverUpdatedAt);
 
-      // Play the audio
+      // Create blob URL for playback
+      const blobUrl = URL.createObjectURL(blob);
       console.log('[SupabaseAudio] Playing downloaded audio:', word);
       await playAudioFromUrl(blobUrl);
+      URL.revokeObjectURL(blobUrl);
       return true;
 
     } catch (err) {

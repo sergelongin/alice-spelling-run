@@ -14,7 +14,8 @@ import type { GradeLevel, WordDefinition } from '@/data/gradeWords';
 import type { AudioPronunciation, GradeFilter, AudioSegmentType, SegmentAudioStatus } from '@/types/audio';
 import { AudioGenerationProgress } from './AudioGenerationProgress';
 import { WordDetailDialog } from './WordDetailDialog';
-import { AddWordModal } from './AddWordModal';
+import { AddWordModal, type AddedWordData } from './AddWordModal';
+import { AddWordAudioPreviewModal } from './AddWordAudioPreviewModal';
 
 // Voice ID from environment (same as other audio uses)
 const getVoiceId = (): string => {
@@ -37,6 +38,7 @@ export function AdminAudioScreen() {
   const [playingSegment, setPlayingSegment] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
+  const [audioPreviewWord, setAudioPreviewWord] = useState<AddedWordData | null>(null);
 
   // Pagination state
   const [page, setPage] = useState(0);
@@ -361,9 +363,10 @@ export function AdminAudioScreen() {
   };
 
   // Handle word added
-  const handleWordAdded = () => {
+  const handleWordAdded = (wordData: AddedWordData) => {
     loadWords();
     loadGlobalStats();
+    setAudioPreviewWord(wordData); // Open audio preview modal
   };
 
   // Handle refresh
@@ -630,6 +633,16 @@ export function AdminAudioScreen() {
         onClose={() => setIsAddModalOpen(false)}
         onWordAdded={handleWordAdded}
         defaultGrade={gradeFilter === 'all' ? 4 : gradeFilter}
+      />
+
+      {/* Audio Preview Modal (after adding a word) */}
+      <AddWordAudioPreviewModal
+        isOpen={audioPreviewWord !== null}
+        onClose={() => {
+          setAudioPreviewWord(null);
+          loadAudioStatus(); // Refresh audio status in table
+        }}
+        word={audioPreviewWord}
       />
 
       {/* Word Detail Dialog */}

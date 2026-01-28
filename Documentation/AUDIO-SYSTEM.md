@@ -133,22 +133,28 @@ const segments = await getAudioSegmentsForWords(['adventure', 'journey'], voiceI
 
 ### `audioCache.ts` - IndexedDB Cache
 
-Client-side caching using IndexedDB for offline playback after initial download.
+Client-side caching using IndexedDB for offline playback after initial download. Stores actual audio data (ArrayBuffer), not blob URLs.
 
 ```typescript
 import { getCachedAudio, setCachedAudio } from '@/utils/audioCache';
 
-// Check cache
+// Check cache - returns { blobUrl, entry } with a fresh blob URL created from stored data
 const cached = await getCachedAudio('adventure', voiceId);
+if (cached) {
+  await playAudio(cached.blobUrl);
+  URL.revokeObjectURL(cached.blobUrl); // Clean up after playback
+}
 
-// Store in cache (7-day TTL)
-await setCachedAudio('adventure', voiceId, blobUrl, storagePath);
+// Store in cache (7-day TTL) - pass the Blob, not a URL
+await setCachedAudio('adventure', voiceId, audioBlob, storagePath);
 ```
 
 **Cache characteristics:**
 - Database: `alice-spelling-audio-cache`
 - TTL: 7 days
+- Stores: `ArrayBuffer` + `mimeType` (not blob URLs)
 - Auto-cleanup of expired entries on module load
+- Creates fresh blob URLs on retrieval (caller should revoke after use)
 
 ### `useSupabaseAudio.ts` - Playback Hook
 
@@ -168,7 +174,105 @@ The admin interface (`/admin/audio`) allows super admins to:
 1. **View audio status** - See which words have audio for each segment
 2. **Generate audio** - Generate missing segments individually or in batch
 3. **Filter by grade** - Focus on specific grade levels
-4. **Add words** - Add new words to the word bank
+4. **Add words** - Add new words with automatic audio generation
+
+### Adding Words (2-Step Wizard)
+
+Adding new words uses a 2-step wizard flow with automatic audio generation:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Add New Word                                            [X] │
+├─────────────────────────────────────────────────────────────┤
+│ (1)────────(2)                                              │
+│ Enter     Review                                            │
+│ Word                                                        │
+│                                                             │
+│ STEP 1: Word Entry                                          │
+│ ┌─────────────────────────────────────────────────────[✓]─┐ │
+│ │ beautiful                                               │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│ ✓ Valid word - definition found                             │
+│                                                             │
+│                              [Cancel]  [Next →]             │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Step 1 (Word Entry):**
+- User enters word
+- Automatic validation via AI (`generateWordDefinition()`)
+- Duplicate check against existing words
+- "Next" enabled only when word is valid and unique
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ Add New Word                                            [X] │
+├─────────────────────────────────────────────────────────────┤
+│ (✓)────────(2)                                              │
+│ Enter     Review                                            │
+│ Word                                                        │
+│                                                             │
+│ STEP 2: Review                                              │
+│ Word: beautiful                                             │
+│                                                             │
+│ Definition *                              ✨ AI-generated   │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ Having qualities that give great pleasure              │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ Example Sentence                          ✨ AI-generated   │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ The sunset was beautiful tonight.                      │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ Grade Level: [Grade 4 (ages 9-10)  ▼]                       │
+│                                                             │
+│              [← Back]  [Cancel]  [Add Word]                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Step 2 (Review):**
+- Shows AI-generated definition, example, and grade level
+- All fields are editable before submission
+- "Back" preserves the word and returns to Step 1
+- "Add Word" saves to database and opens audio preview
+
+### Audio Preview After Word Addition
+
+After adding a word, an audio preview modal automatically opens and generates all segments:
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│ 🔊 Audio Generated                                      [X] │
+├─────────────────────────────────────────────────────────────┤
+│ Word added: beautiful • Grade 4                             │
+│                                                             │
+│ Audio Segments                                              │
+│ ┌─────────────────────────────────────────────────────────┐ │
+│ │ ✓ Word       "beautiful"                         [▶]   │ │
+│ ├─────────────────────────────────────────────────────────┤ │
+│ │ ⟳ Definition "beautiful: Having qualities..."          │ │
+│ ├─────────────────────────────────────────────────────────┤ │
+│ │ ○ Sentence   "The sunset was beautiful..."   pending   │ │
+│ └─────────────────────────────────────────────────────────┘ │
+│                                                             │
+│ ⟳ Generating 2 of 3...                                      │
+│                                                             │
+│                                                   [Done]    │
+└─────────────────────────────────────────────────────────────┘
+```
+
+**Features:**
+- Auto-triggers generation for all segments (word, definition, sentence) on open
+- Shows real-time progress: pending → generating (spinner) → complete (✓) → error
+- Play buttons appear for completed segments
+- Retry button for failed segments
+- "Done" always enabled (non-blocking - generation continues in background)
+- Cache-busting URL for freshly generated audio playback
+
+**Components:**
+- `AddWordModal` - 2-step wizard for word entry and review
+- `AddWordAudioPreviewModal` - Auto-generation and preview modal
 
 ### Batch Generation Flow
 
@@ -277,6 +381,41 @@ When regenerating with different settings (e.g., volume=1.2 instead of 1.0), the
 
 **Solution:** Set 'generating' status once before the retry loop, not inside it. See `generateSegment()` in `useAdminAudioGenerator.ts`.
 
+### Blob URLs Don't Persist Across Page Refreshes
+
+**Error:** `GET blob:http://localhost:5173/... net::ERR_FILE_NOT_FOUND`
+
+**Symptom:** Audio plays fine during a session, but after page refresh cached audio fails with "Audio playback failed" error.
+
+**Cause:** The original cache implementation stored blob URLs (strings like `blob:http://localhost:5173/abc123...`) in IndexedDB. However, blob URLs are session-specific - they only exist for the lifetime of the document that created them. After page refresh, the URL string is still in IndexedDB but the actual blob data it referenced is gone.
+
+**Solution:** Store the actual audio data (`ArrayBuffer`) in IndexedDB instead of blob URLs:
+
+```typescript
+// OLD (broken) - stored URL string that becomes invalid
+const entry = { blobUrl: URL.createObjectURL(blob), ... };
+
+// NEW (correct) - store actual data
+const entry = {
+  blobData: await blob.arrayBuffer(),
+  mimeType: blob.type,
+  ...
+};
+
+// On retrieval, create a fresh blob URL
+const blob = new Blob([entry.blobData], { type: entry.mimeType });
+const blobUrl = URL.createObjectURL(blob);
+// ... play audio ...
+URL.revokeObjectURL(blobUrl); // Clean up after use
+```
+
+**Migration:** The cache includes detection for old-format entries. When an entry with `blobUrl` (string) instead of `blobData` (ArrayBuffer) is found, it's automatically deleted, forcing a fresh download.
+
+**Manual cache clear:** If issues persist, clear the IndexedDB cache in browser DevTools:
+```javascript
+indexedDB.deleteDatabase('alice-spelling-audio-cache')
+```
+
 ---
 
 ## Future Considerations
@@ -317,7 +456,7 @@ When regenerating with different settings (e.g., volume=1.2 instead of 1.0), the
    - Allow manual "Download for offline" action
 
 4. **IndexedDB schema update:**
-   - Store actual Blob data instead of blob URLs
+   - ~~Store actual Blob data instead of blob URLs~~ ✅ Implemented
    - Add segment_type to cache keys
    - Consider storing all 3 segments per word
 

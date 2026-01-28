@@ -230,7 +230,7 @@ async function streamAndCacheAudio(
               nextStartTime += audioBuffer.duration;
               lastScheduledEndTime = nextStartTime;
             }
-          } catch (parseErr) {
+          } catch {
             // Ignore parse errors for non-JSON lines
           }
         }

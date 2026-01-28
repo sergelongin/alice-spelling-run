@@ -58,12 +58,20 @@ function getCacheKey(word: string, voiceId: string): string {
 }
 
 /**
- * Get cached audio entry
+ * Result from getting cached audio - includes a fresh blob URL
+ */
+export interface CachedAudioResult {
+  blobUrl: string;
+  entry: AudioCacheEntry;
+}
+
+/**
+ * Get cached audio and create a fresh blob URL from stored data
  */
 export async function getCachedAudio(
   word: string,
   voiceId: string
-): Promise<AudioCacheEntry | null> {
+): Promise<CachedAudioResult | null> {
   try {
     const database = await initDB();
     const key = getCacheKey(word, voiceId);
@@ -90,7 +98,20 @@ export async function getCachedAudio(
           return;
         }
 
-        resolve(entry);
+        // Check for old cache format (had blobUrl string instead of blobData)
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        if (!entry.blobData || (entry as any).blobUrl) {
+          console.log('[AudioCache] Deleting stale cache entry (old format):', word);
+          deleteCachedAudio(word, voiceId).catch(console.error);
+          resolve(null);
+          return;
+        }
+
+        // Create a fresh blob URL from stored data
+        const blob = new Blob([entry.blobData], { type: entry.mimeType });
+        const blobUrl = URL.createObjectURL(blob);
+
+        resolve({ blobUrl, entry });
       };
     });
   } catch (err) {
@@ -100,26 +121,33 @@ export async function getCachedAudio(
 }
 
 /**
- * Store audio in cache
+ * Store audio blob in cache
+ * @param serverUpdatedAt - Server timestamp for cache invalidation (ms since epoch)
  */
 export async function setCachedAudio(
   word: string,
   voiceId: string,
-  blobUrl: string,
-  storagePath: string
+  blob: Blob,
+  storagePath: string,
+  serverUpdatedAt: number
 ): Promise<void> {
   try {
     const database = await initDB();
     const key = getCacheKey(word, voiceId);
     const now = Date.now();
 
+    // Convert blob to ArrayBuffer for storage
+    const blobData = await blob.arrayBuffer();
+
     const entry: AudioCacheEntry = {
       word: key,
       voiceId,
-      blobUrl,
+      blobData,
+      mimeType: blob.type || 'audio/mpeg',
       storagePath,
       cachedAt: now,
       expiresAt: now + CACHE_TTL_MS,
+      serverUpdatedAt,
     };
 
     return new Promise((resolve, reject) => {
@@ -160,6 +188,15 @@ export async function deleteCachedAudio(word: string, voiceId: string): Promise<
 }
 
 /**
+ * Invalidate a cache entry when server audio has been updated
+ * Alias for deleteCachedAudio for semantic clarity
+ */
+export async function invalidateCacheEntry(word: string, voiceId: string): Promise<void> {
+  console.log('[AudioCache] Invalidating stale cache entry:', word);
+  return deleteCachedAudio(word, voiceId);
+}
+
+/**
  * Clear all expired entries from cache
  */
 export async function clearExpiredCache(): Promise<number> {
@@ -179,11 +216,6 @@ export async function clearExpiredCache(): Promise<number> {
       request.onsuccess = () => {
         const cursor = request.result;
         if (cursor) {
-          // Revoke blob URL before deleting
-          const entry = cursor.value as AudioCacheEntry;
-          if (entry.blobUrl) {
-            URL.revokeObjectURL(entry.blobUrl);
-          }
           cursor.delete();
           deletedCount++;
           cursor.continue();
@@ -209,24 +241,12 @@ export async function clearAllCache(): Promise<void> {
     return new Promise((resolve, reject) => {
       const transaction = database.transaction(STORE_NAME, 'readwrite');
       const store = transaction.objectStore(STORE_NAME);
+      const request = store.clear();
 
-      // First revoke all blob URLs
-      const getAllRequest = store.getAll();
-      getAllRequest.onsuccess = () => {
-        const entries = getAllRequest.result as AudioCacheEntry[];
-        for (const entry of entries) {
-          if (entry.blobUrl) {
-            URL.revokeObjectURL(entry.blobUrl);
-          }
-        }
-
-        // Then clear the store
-        const clearRequest = store.clear();
-        clearRequest.onerror = () => reject(clearRequest.error);
-        clearRequest.onsuccess = () => {
-          console.log('[AudioCache] Cleared all cache');
-          resolve();
-        };
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        console.log('[AudioCache] Cleared all cache');
+        resolve();
       };
     });
   } catch (err) {

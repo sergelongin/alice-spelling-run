@@ -80,6 +80,7 @@ export async function checkAudioAvailability(
     exists: true,
     pronunciation: pronunciation as AudioPronunciation,
     publicUrl: urlData?.publicUrl,
+    updatedAt: pronunciation.updated_at,
   };
 }
 

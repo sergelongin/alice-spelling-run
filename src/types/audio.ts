@@ -14,10 +14,12 @@ export interface AudioVoiceConfig {
 export interface AudioCacheEntry {
   word: string;
   voiceId: string;
-  blobUrl: string;
+  blobData: ArrayBuffer; // Store actual audio data, not blob URL (URLs don't persist)
+  mimeType: string;
   storagePath: string;
   cachedAt: number; // timestamp
   expiresAt: number; // timestamp
+  serverUpdatedAt: number; // server timestamp for cache invalidation
 }
 
 export interface AudioGenerationStatus {
@@ -54,6 +56,7 @@ export interface AudioAvailability {
   exists: boolean;
   pronunciation?: AudioPronunciation;
   publicUrl?: string;
+  updatedAt?: string; // ISO timestamp from server for cache invalidation
 }
 
 /**

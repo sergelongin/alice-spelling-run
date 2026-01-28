@@ -97,6 +97,20 @@ export function RegenerateAudioModal({
     }
   }, [isOpen]);
 
+  // Handle ESC key to close
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isSaving) {
+        handleClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, isSaving]);
+
   if (!isOpen) return null;
 
   const handlePreview = async () => {
