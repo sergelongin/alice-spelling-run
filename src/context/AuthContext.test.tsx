@@ -45,16 +45,15 @@ describe('AuthContext', () => {
         wrapper: createWrapper(),
       });
 
-      // Initially loading
-      expect(result.current.isLoading).toBe(true);
-      expect(result.current.user).toBe(null);
-      expect(result.current.session).toBe(null);
-      expect(result.current.profile).toBe(null);
-
-      // Wait for initialization to complete
+      // Wait for initialization to complete (loading may finish immediately with mocked async)
       await waitFor(() => {
         expect(result.current.isLoading).toBe(false);
       });
+
+      // After loading, unauthenticated state should be null
+      expect(result.current.user).toBe(null);
+      expect(result.current.session).toBe(null);
+      expect(result.current.profile).toBe(null);
     });
 
     it('should restore session from existing login', async () => {
@@ -77,7 +76,9 @@ describe('AuthContext', () => {
               data: table === 'profiles' ? profile : null,
               error: null,
             }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -375,7 +376,9 @@ describe('AuthContext', () => {
               data: table === 'profiles' ? profile : null,
               error: null,
             }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -440,11 +443,13 @@ describe('AuthContext', () => {
       });
 
       // Mock the profile fetch to return super_admin
-      mockSupabase.from.mockImplementation((table: string) => ({
+      mockSupabase.from.mockImplementation((_table: string) => ({
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -485,7 +490,9 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -528,7 +535,9 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -572,9 +581,11 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({
-              data: table === 'children' ? [child] : [],
-              error: null,
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: table === 'children' ? [child] : [],
+                error: null,
+              }),
             }),
           }),
         }),
@@ -615,7 +626,9 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
         insert: vi.fn().mockReturnValue({
@@ -749,7 +762,9 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({ data: [child1, child2], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [child1, child2], error: null }),
+            }),
           }),
         }),
       }));
@@ -806,7 +821,9 @@ describe('AuthContext', () => {
               data: null,
               error: { message: 'Profile not found' },
             }),
-            order: vi.fn().mockResolvedValue({ data: [], error: null }),
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({ data: [], error: null }),
+            }),
           }),
         }),
       }));
@@ -837,9 +854,11 @@ describe('AuthContext', () => {
         select: vi.fn().mockReturnValue({
           eq: vi.fn().mockReturnValue({
             single: vi.fn().mockResolvedValue({ data: profile, error: null }),
-            order: vi.fn().mockResolvedValue({
-              data: null,
-              error: table === 'children' ? { message: 'Failed to fetch' } : null,
+            order: vi.fn().mockReturnValue({
+              limit: vi.fn().mockResolvedValue({
+                data: null,
+                error: table === 'children' ? { message: 'Failed to fetch' } : null,
+              }),
             }),
           }),
         }),

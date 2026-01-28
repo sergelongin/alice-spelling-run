@@ -1,5 +1,5 @@
-import { useState, type FormEvent } from 'react';
-import { X, User, GraduationCap, AlertCircle } from 'lucide-react';
+import { useState, useEffect, type FormEvent } from 'react';
+import { X, User, Calendar, AlertCircle } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { ChildProfile } from '@/types/auth';
 
@@ -9,19 +9,62 @@ interface EditProfileModalProps {
   onSaved: () => void;
 }
 
-const GRADE_OPTIONS = [
-  { value: 3, label: 'Grade 3', description: 'Ages 8-9' },
-  { value: 4, label: 'Grade 4', description: 'Ages 9-10' },
-  { value: 5, label: 'Grade 5', description: 'Ages 10-11' },
-  { value: 6, label: 'Grade 6', description: 'Ages 11-12' },
+const MONTHS = [
+  { value: 1, label: 'January' },
+  { value: 2, label: 'February' },
+  { value: 3, label: 'March' },
+  { value: 4, label: 'April' },
+  { value: 5, label: 'May' },
+  { value: 6, label: 'June' },
+  { value: 7, label: 'July' },
+  { value: 8, label: 'August' },
+  { value: 9, label: 'September' },
+  { value: 10, label: 'October' },
+  { value: 11, label: 'November' },
+  { value: 12, label: 'December' },
 ];
+
+// Generate years from 2010 to current year
+const currentYear = new Date().getFullYear();
+const YEARS = Array.from({ length: currentYear - 2010 + 1 }, (_, i) => 2010 + i).reverse();
+
+function calculateAge(birthMonth: number | null | undefined, birthYear: number | null | undefined): string | null {
+  if (!birthMonth || !birthYear) return null;
+
+  const now = new Date();
+  const birth = new Date(birthYear, birthMonth - 1, 1);
+  let age = now.getFullYear() - birth.getFullYear();
+  const monthDiff = now.getMonth() - birth.getMonth();
+
+  if (monthDiff < 0) {
+    age--;
+  }
+
+  if (age < 1) return null;
+  return `${age} yrs`;
+}
 
 export function EditProfileModal({ child, onClose, onSaved }: EditProfileModalProps) {
   const { updateChild } = useAuth();
   const [name, setName] = useState(child.name);
-  const [gradeLevel, setGradeLevel] = useState(child.grade_level);
+  const [birthMonth, setBirthMonth] = useState<number | null>(child.birth_month);
+  const [birthYear, setBirthYear] = useState<number | null>(child.birth_year);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const calculatedAge = calculateAge(birthMonth, birthYear);
+
+  // Handle ESC key to close
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && !isLoading) {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [onClose, isLoading]);
 
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
@@ -36,7 +79,8 @@ export function EditProfileModal({ child, onClose, onSaved }: EditProfileModalPr
 
     const result = await updateChild(child.id, {
       name: name.trim(),
-      grade_level: gradeLevel,
+      birth_month: birthMonth,
+      birth_year: birthYear,
     });
 
     setIsLoading(false);
@@ -79,6 +123,7 @@ export function EditProfileModal({ child, onClose, onSaved }: EditProfileModalPr
             </div>
           )}
 
+          {/* Name */}
           <div>
             <label htmlFor="name" className="block text-sm font-medium text-gray-300 mb-1">
               Name
@@ -97,30 +142,47 @@ export function EditProfileModal({ child, onClose, onSaved }: EditProfileModalPr
             </div>
           </div>
 
+          {/* Birth Date */}
           <div>
-            <label className="block text-sm font-medium text-gray-300 mb-2">
+            <label className="block text-sm font-medium text-gray-300 mb-1">
               <div className="flex items-center gap-2">
-                <GraduationCap size={16} />
-                Grade Level
+                <Calendar size={16} />
+                Birth Date
+                <span className="text-gray-500 font-normal">(optional)</span>
               </div>
             </label>
-            <div className="grid grid-cols-2 gap-2">
-              {GRADE_OPTIONS.map((option) => (
-                <button
-                  key={option.value}
-                  type="button"
-                  onClick={() => setGradeLevel(option.value)}
-                  disabled={isLoading}
-                  className={`p-3 rounded-lg border-2 text-left transition-colors ${
-                    gradeLevel === option.value
-                      ? 'border-blue-500 bg-blue-900/30'
-                      : 'border-gray-600 hover:border-gray-500 bg-gray-700/50'
-                  }`}
-                >
-                  <div className="font-medium text-white">{option.label}</div>
-                  <div className="text-xs text-gray-400">{option.description}</div>
-                </button>
-              ))}
+            <div className="flex gap-2 items-center">
+              <select
+                value={birthMonth ?? ''}
+                onChange={(e) => setBirthMonth(e.target.value ? Number(e.target.value) : null)}
+                className="flex-1 px-3 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                disabled={isLoading}
+              >
+                <option value="">Month</option>
+                {MONTHS.map((month) => (
+                  <option key={month.value} value={month.value}>
+                    {month.label}
+                  </option>
+                ))}
+              </select>
+              <select
+                value={birthYear ?? ''}
+                onChange={(e) => setBirthYear(e.target.value ? Number(e.target.value) : null)}
+                className="flex-1 px-3 py-2.5 bg-gray-700 border border-gray-600 rounded-lg text-white focus:ring-2 focus:ring-blue-500 focus:border-blue-500 transition-colors"
+                disabled={isLoading}
+              >
+                <option value="">Year</option>
+                {YEARS.map((year) => (
+                  <option key={year} value={year}>
+                    {year}
+                  </option>
+                ))}
+              </select>
+              {calculatedAge && (
+                <span className="text-sm text-gray-400 whitespace-nowrap">
+                  {calculatedAge}
+                </span>
+              )}
             </div>
           </div>
 

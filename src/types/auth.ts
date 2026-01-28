@@ -7,9 +7,8 @@ export interface UserProfile extends Profile {
   children?: ChildProfile[];
 }
 
-export interface ChildProfile extends Child {
-  // Extended child profile can include computed fields
-}
+// Extended child profile - uses interface for future extensibility
+export type ChildProfile = Child;
 
 export type CacheStatus = 'none' | 'stale' | 'fresh';
 
@@ -40,6 +39,9 @@ export interface SignInData {
 export interface AddChildData {
   name: string;
   gradeLevel: number;
+  birthMonth?: number;
+  birthYear?: number;
+  pendingGradeImport?: number | null;
 }
 
 export interface AuthContextValue extends AuthState {
@@ -53,8 +55,9 @@ export interface AuthContextValue extends AuthState {
 
   // Child management
   addChild: (data: AddChildData) => Promise<{ child: ChildProfile | null; error: string | null }>;
-  updateChild: (childId: string, data: Partial<Pick<Child, 'name' | 'grade_level'>>) => Promise<{ error: string | null }>;
+  updateChild: (childId: string, data: Partial<Pick<Child, 'name' | 'grade_level' | 'pending_grade_import' | 'birth_month' | 'birth_year'>>) => Promise<{ error: string | null }>;
   removeChild: (childId: string) => Promise<{ error: string | null }>;
+  resetChildProgress: (childId: string) => Promise<{ error: string | null }>;
   setActiveChild: (childId: string | null) => void;
 
   // Profile selection (Netflix-style)

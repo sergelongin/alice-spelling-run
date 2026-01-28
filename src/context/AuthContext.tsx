@@ -23,6 +23,7 @@ import type {
   AddChildData,
 } from '@/types/auth';
 import { revokeParentDashboardAccess } from '@/hooks/useParentDashboardAccess';
+import { resetWatermelonDBForChild } from '@/db/resetChild';
 
 const ACTIVE_CHILD_KEY = 'alice-spelling-run-active-child';
 const SESSION_PROFILE_SELECTED_KEY = 'alice-spelling-run-profile-selected';
@@ -395,6 +396,9 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
           parent_id: state.user.id,
           name: data.name,
           grade_level: data.gradeLevel,
+          birth_month: data.birthMonth ?? null,
+          birth_year: data.birthYear ?? null,
+          pending_grade_import: data.pendingGradeImport ?? null,
         })
         .select()
         .single();
@@ -430,7 +434,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
   const updateChild = useCallback(
     async (
       childId: string,
-      data: Partial<Pick<ChildProfile, 'name' | 'grade_level'>>
+      data: Partial<Pick<ChildProfile, 'name' | 'grade_level' | 'pending_grade_import' | 'birth_month' | 'birth_year'>>
     ): Promise<{ error: string | null }> => {
       const { error } = await supabase
         .from('children')
@@ -497,6 +501,72 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
     []
   );
 
+  // Reset child progress (clears all learning data while keeping the profile)
+  const resetChildProgress = useCallback(
+    async (childId: string): Promise<{ error: string | null }> => {
+      try {
+        console.log('[Auth] Starting reset for child:', childId);
+
+        // 1. Call Supabase RPC to clear server data
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const { data, error } = await (supabase.rpc as any)('reset_child_progress', {
+          p_child_id: childId,
+        });
+
+        if (error) {
+          console.error('[Auth] Reset child progress RPC error:', error);
+          return { error: error.message };
+        }
+
+        console.log('[Auth] Server data cleared:', data);
+
+        // Verify server data was actually deleted
+        const verifyResult = await supabase
+          .from('child_word_progress')
+          .select('id', { count: 'exact', head: true })
+          .eq('child_id', childId);
+
+        if (verifyResult.count && verifyResult.count > 0) {
+          console.error('[Auth] VERIFICATION FAILED: Server still has', verifyResult.count, 'word_progress records');
+          return { error: `Server reset failed - ${verifyResult.count} records remain` };
+        }
+        console.log('[Auth] Verified: Server has 0 word_progress records');
+
+        // 2. Clear localStorage keys for this child
+        const localStorageKeys = [
+          `alice-spelling-run-word-bank-${childId}`,
+          `alice-spelling-run-statistics-${childId}`,
+          `alice-spelling-run-calibration-${childId}`,
+          `alice-spelling-run-learning-progress-${childId}`,
+          `alice-spelling-run-sync-queue-${childId}`,
+          `alice-spelling-run-sync-metadata-${childId}`,
+          `alice-spelling-run-watermelon-migrated-${childId}`,
+        ];
+
+        for (const key of localStorageKeys) {
+          localStorage.removeItem(key);
+        }
+
+        console.log('[Auth] localStorage cleared for child:', childId);
+
+        // 3. Clear WatermelonDB records
+        const watermelonCounts = await resetWatermelonDBForChild(childId);
+        console.log('[Auth] WatermelonDB cleared:', watermelonCounts);
+
+        // Delay to ensure IndexedDB has flushed before any potential reload
+        // IndexedDB writes can be async at the browser level
+        await new Promise(resolve => setTimeout(resolve, 500));
+
+        console.log('[Auth] Reset completed successfully for child:', childId);
+        return { error: null };
+      } catch (err) {
+        console.error('[Auth] Reset child progress error:', err);
+        return { error: err instanceof Error ? err.message : 'Unknown error' };
+      }
+    },
+    []
+  );
+
   // Set active child
   const setActiveChild = useCallback((childId: string | null) => {
     setCachedActiveChildId(childId);
@@ -558,6 +628,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       addChild,
       updateChild,
       removeChild,
+      resetChildProgress,
       setActiveChild,
       selectProfile,
       clearProfileSelection,
@@ -577,6 +648,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       addChild,
       updateChild,
       removeChild,
+      resetChildProgress,
       setActiveChild,
       selectProfile,
       clearProfileSelection,

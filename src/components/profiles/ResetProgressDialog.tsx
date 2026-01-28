@@ -1,16 +1,16 @@
 import { useState, useEffect } from 'react';
-import { AlertTriangle } from 'lucide-react';
+import { RotateCcw } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import type { ChildProfile } from '@/types/auth';
 
-interface DeleteConfirmDialogProps {
+interface ResetProgressDialogProps {
   child: ChildProfile;
   onClose: () => void;
-  onDeleted: () => void;
+  onReset: () => void;
 }
 
-export function DeleteConfirmDialog({ child, onClose, onDeleted }: DeleteConfirmDialogProps) {
-  const { removeChild } = useAuth();
+export function ResetProgressDialog({ child, onClose, onReset }: ResetProgressDialogProps) {
+  const { resetChildProgress } = useAuth();
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -26,18 +26,22 @@ export function DeleteConfirmDialog({ child, onClose, onDeleted }: DeleteConfirm
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, [onClose, isLoading]);
 
-  const handleDelete = async () => {
+  const handleReset = async () => {
     setIsLoading(true);
     setError(null);
 
-    const result = await removeChild(child.id);
+    console.log('[ResetProgressDialog] Starting reset for child:', child.id);
+    const result = await resetChildProgress(child.id);
+    console.log('[ResetProgressDialog] Reset result:', result);
 
     setIsLoading(false);
 
     if (result.error) {
+      console.error('[ResetProgressDialog] Reset failed:', result.error);
       setError(result.error);
     } else {
-      onDeleted();
+      console.log('[ResetProgressDialog] Reset successful, calling onReset');
+      onReset();
       onClose();
     }
   };
@@ -54,17 +58,28 @@ export function DeleteConfirmDialog({ child, onClose, onDeleted }: DeleteConfirm
       <div className="relative w-full max-w-sm bg-gray-800 rounded-xl shadow-xl p-6">
         <div className="flex flex-col items-center text-center">
           {/* Warning icon */}
-          <div className="w-12 h-12 bg-red-900/50 rounded-full flex items-center justify-center mb-4">
-            <AlertTriangle className="w-6 h-6 text-red-400" />
+          <div className="w-12 h-12 bg-amber-900/50 rounded-full flex items-center justify-center mb-4">
+            <RotateCcw className="w-6 h-6 text-amber-400" />
           </div>
 
           <h3 className="text-xl font-semibold text-white mb-2">
-            Delete Profile?
+            Reset Progress?
           </h3>
 
-          <p className="text-gray-400 mb-6">
-            Are you sure you want to delete <span className="text-white font-medium">{child.name}</span>'s profile?
-            This will remove all their progress and cannot be undone.
+          <p className="text-gray-400 mb-4">
+            This will clear all learning progress for <span className="text-white font-medium">{child.name}</span>:
+          </p>
+
+          {/* What will be deleted */}
+          <ul className="text-left text-gray-300 text-sm mb-4 space-y-1 w-full bg-gray-700/50 rounded-lg p-3">
+            <li>- Word mastery levels</li>
+            <li>- Game history and statistics</li>
+            <li>- Streaks and achievements</li>
+            <li>- Calibration results</li>
+          </ul>
+
+          <p className="text-gray-500 text-sm mb-6">
+            The profile will be kept. This cannot be undone.
           </p>
 
           {error && (
@@ -83,17 +98,17 @@ export function DeleteConfirmDialog({ child, onClose, onDeleted }: DeleteConfirm
               Cancel
             </button>
             <button
-              onClick={handleDelete}
+              onClick={handleReset}
               disabled={isLoading}
-              className="flex-1 py-2.5 px-4 bg-red-600 hover:bg-red-700 disabled:bg-red-800 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
+              className="flex-1 py-2.5 px-4 bg-amber-600 hover:bg-amber-700 disabled:bg-amber-800 text-white font-medium rounded-lg transition-colors flex items-center justify-center gap-2"
             >
               {isLoading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
-                  Deleting...
+                  Resetting...
                 </>
               ) : (
-                'Delete'
+                'Reset Progress'
               )}
             </button>
           </div>
