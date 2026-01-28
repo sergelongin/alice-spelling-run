@@ -3,6 +3,7 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Home, BookOpen, BarChart3, Volume2, LogOut, User, ChevronDown, Users, Settings, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { ProfileAvatar } from '@/components/profiles';
+import { SyncStatusIndicator } from '@/components/sync';
 
 export function Header() {
   const location = useLocation();
@@ -26,6 +27,7 @@ export function Header() {
 
   const isActive = (path: string) => location.pathname === path;
   const isAdminRoute = location.pathname.startsWith('/admin');
+  const isParentDashboardRoute = location.pathname.startsWith('/parent-dashboard');
 
   const handleSignOut = async () => {
     await signOut();
@@ -46,7 +48,9 @@ export function Header() {
   }
 
   return (
-    <header className="bg-white/90 backdrop-blur-sm shadow-sm relative z-50">
+    <header className={`bg-white/90 backdrop-blur-sm shadow-sm relative z-50 ${
+      isParentDashboardRoute ? 'border-b-2 border-purple-400' : ''
+    }`}>
       <div className="max-w-6xl mx-auto px-4 py-3">
         <nav className="flex items-center justify-between">
           <Link
@@ -58,8 +62,15 @@ export function Header() {
           </Link>
 
           <div className="flex items-center gap-2">
-            {/* Main navigation */}
-            {!isAdminRoute && (
+            {/* Parent Mode badge */}
+            {isParentDashboardRoute && (
+              <span className="px-2 py-1 bg-purple-100 text-purple-700 text-sm font-medium rounded">
+                Parent Mode
+              </span>
+            )}
+
+            {/* Main navigation - only show when NOT on admin or parent dashboard routes */}
+            {!isAdminRoute && !isParentDashboardRoute && (
               <>
                 <Link
                   to="/"
@@ -129,11 +140,14 @@ export function Header() {
               </>
             )}
 
+            {/* Sync status indicator */}
+            <SyncStatusIndicator />
+
             {/* Divider */}
             <div className="w-px h-6 bg-gray-200 mx-1" />
 
-            {/* Active child profile (for parents/super admins on non-admin routes) */}
-            {!isAdminRoute && isParentOrSuperAdmin && hasChildren && activeChild && (
+            {/* Active child profile (for parents/super admins on non-admin and non-parent-dashboard routes) */}
+            {!isAdminRoute && !isParentDashboardRoute && isParentOrSuperAdmin && hasChildren && activeChild && (
               <button
                 onClick={handleSwitchProfile}
                 className="flex items-center gap-2 px-2 py-1.5 hover:bg-gray-100 rounded-lg transition-colors"

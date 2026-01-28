@@ -1,4 +1,4 @@
-import { useMemo } from 'react';
+import { useMemo, useEffect } from 'react';
 import {
   X,
   Clock,
@@ -153,6 +153,20 @@ export function WordDetailModal({
   onUnarchive,
 }: WordDetailModalProps) {
   const { speak, isSpeaking, isSupported: isTTSSupported } = useTextToSpeech();
+
+  // Handle ESC key to close
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
 
   // Calculate stats from attempt history
   const stats = useMemo(() => {
