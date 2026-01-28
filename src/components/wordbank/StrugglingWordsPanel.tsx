@@ -71,7 +71,7 @@ export function StrugglingWordsPanel({
                       Level {word.masteryLevel}
                     </span>
                     <span className="text-xs text-gray-500">
-                      {word.timesUsed} attempts
+                      {(word.attemptHistory || []).length} attempts
                     </span>
                     <span className={`text-xs font-medium ${
                       word.accuracy < 33 ? 'text-red-600' :
@@ -137,10 +137,15 @@ export function getStrugglingWords(words: Word[]): StrugglingWord[] {
 
   for (const word of words) {
     if (word.isActive === false) continue;
-    if (word.timesUsed < 3) continue;
 
-    const accuracy = word.timesUsed > 0
-      ? Math.round((word.timesCorrect / word.timesUsed) * 100)
+    // Calculate attempts and accuracy from attemptHistory
+    const attempts = word.attemptHistory || [];
+    const totalAttempts = attempts.length;
+    if (totalAttempts < 3) continue;
+
+    const correctAttempts = attempts.filter(a => a.wasCorrect).length;
+    const accuracy = totalAttempts > 0
+      ? Math.round((correctAttempts / totalAttempts) * 100)
       : 0;
 
     if (accuracy >= 50) continue;
@@ -166,6 +171,7 @@ export function getStrugglingWords(words: Word[]): StrugglingWord[] {
     const patterns = Array.from(patternCounts.entries())
       .sort((a, b) => b[1] - a[1])
       .slice(0, 2)
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any -- ErrorPatternType from string key
       .map(([pattern]) => getPatternName(pattern as any));
 
     struggling.push({

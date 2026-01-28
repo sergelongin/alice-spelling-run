@@ -5,7 +5,6 @@ export { TodaysMissionCard } from './TodaysMissionCard';
 export { ProgressJourney } from './ProgressJourney';
 export { AchievementBadges } from './AchievementBadges';
 export { StarWordsShowcase } from './StarWordsShowcase';
-export { AlmostThereSection } from './AlmostThereSection';
 export { QuickStatsDashboard } from './QuickStatsDashboard';
 export { AttentionNeededAlert } from './AttentionNeededAlert';
 export { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';
@@ -13,3 +12,5 @@ export { ErrorPatternAnalysis, getActivePatternCount } from './ErrorPatternAnaly
 export { WordManagementTable } from './WordManagementTable';
 export { RecommendationsPanel } from './RecommendationsPanel';
 export { ActivityHeatmap } from './ActivityHeatmap';
+export { WordCatalogModal } from './WordCatalogModal';
+export { SpellingListImport } from './SpellingListImport';

@@ -81,19 +81,25 @@ export function WordManagementTable({
         case 'level':
           comparison = a.masteryLevel - b.masteryLevel;
           break;
-        case 'accuracy':
-          const accA = a.timesUsed > 0 ? a.timesCorrect / a.timesUsed : 0;
-          const accB = b.timesUsed > 0 ? b.timesCorrect / b.timesUsed : 0;
+        case 'accuracy': {
+          // Use attemptHistory for consistent sorting (matches display)
+          const attemptsA = a.attemptHistory || [];
+          const attemptsB = b.attemptHistory || [];
+          const accA = attemptsA.length > 0 ? attemptsA.filter(x => x.wasCorrect).length / attemptsA.length : 0;
+          const accB = attemptsB.length > 0 ? attemptsB.filter(x => x.wasCorrect).length / attemptsB.length : 0;
           comparison = accA - accB;
           break;
+        }
         case 'attempts':
-          comparison = a.timesUsed - b.timesUsed;
+          // Use attemptHistory for consistent sorting (matches display)
+          comparison = (a.attemptHistory?.length || 0) - (b.attemptHistory?.length || 0);
           break;
-        case 'lastPracticed':
+        case 'lastPracticed': {
           const dateA = a.lastAttemptAt ? new Date(a.lastAttemptAt).getTime() : 0;
           const dateB = b.lastAttemptAt ? new Date(b.lastAttemptAt).getTime() : 0;
           comparison = dateA - dateB;
           break;
+        }
       }
 
       return sortDirection === 'asc' ? comparison : -comparison;
@@ -290,8 +296,12 @@ export function WordManagementTable({
                     const isArchived = word.isActive === false;
                     const state = getWordState(word);
                     const stateLabel = getStateLabel(state);
-                    const accuracy = word.timesUsed > 0
-                      ? Math.round((word.timesCorrect / word.timesUsed) * 100)
+                    // Use attemptHistory as the authoritative source (matches WordDetailModal)
+                    const attempts = word.attemptHistory || [];
+                    const totalAttempts = attempts.length;
+                    const correctAttempts = attempts.filter(a => a.wasCorrect).length;
+                    const accuracy = totalAttempts > 0
+                      ? Math.round((correctAttempts / totalAttempts) * 100)
                       : null;
 
                     return (
@@ -327,7 +337,7 @@ export function WordManagementTable({
                           )}
                         </td>
                         <td className="px-3 py-3 text-gray-600">
-                          {word.timesUsed}
+                          {totalAttempts}
                         </td>
                         <td className="px-3 py-3 text-gray-500 hidden md:table-cell">
                           {formatDate(word.lastAttemptAt)}

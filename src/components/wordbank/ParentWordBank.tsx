@@ -1,38 +1,34 @@
 import React, { useState, useMemo } from 'react';
-import { useNavigate } from 'react-router-dom';
 import {
-  ArrowLeft,
-  User,
   Plus,
   Download,
   GraduationCap,
   Trash2,
   AlertCircle,
+  BookOpen,
 } from 'lucide-react';
 import { Button, Modal, WordDetailModal } from '../common';
-import { QuickStatsDashboard } from './QuickStatsDashboard';
 import { AttentionNeededAlert } from './AttentionNeededAlert';
-import { ActivityHeatmap } from './ActivityHeatmap';
 import { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';
-import { ErrorPatternAnalysis, getActivePatternCount } from './ErrorPatternAnalysis';
+import { getActivePatternCount } from './ErrorPatternAnalysis';
 import { WordManagementTable } from './WordManagementTable';
-import { RecommendationsPanel } from './RecommendationsPanel';
-import { useGameContext } from '@/context/GameContext';
+import { WordCatalogModal } from './WordCatalogModal';
+import { SpellingListImport } from './SpellingListImport';
+import { useGameContext } from '@/context/GameContextDB';
 import { Word } from '@/types';
-import { validateWord, categorizeWordsByState } from '@/utils/wordSelection';
-import { calculatePracticeStreak, getRecentlyMasteredWords } from '@/types/achievements';
-import { GRADE_INFO, GradeLevel } from '@/data/gradeWords';
+import { validateWord } from '@/utils/wordSelection';
+import { GRADE_INFO, GradeLevel, WordDefinition } from '@/data/gradeWords';
 
 interface ParentWordBankProps {
-  onSwitchToChildMode: () => void;
+  /** When true, hides the "Word Bank Analytics" header (used when inside ChildWordBankScreen) */
+  hideHeader?: boolean;
 }
 
 /**
  * Parent Mode view of the Word Bank.
  * Data-rich analytics, word management, and actionable insights.
  */
-export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
-  const navigate = useNavigate();
+export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
   const {
     wordBank,
     statistics,
@@ -44,6 +40,8 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     importGradeWords,
     importDefaultWords,
     clearWordBank,
+    addWordsFromCatalog,
+    importCustomWords,
   } = useGameContext();
 
   // UI state
@@ -52,20 +50,13 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
   const [selectedWord, setSelectedWord] = useState<Word | null>(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const [showGradeModal, setShowGradeModal] = useState(false);
+  const [showCatalogModal, setShowCatalogModal] = useState(false);
   const [importResult, setImportResult] = useState<{ grade: number; count: number } | null>(null);
-  const [expandedPanel, setExpandedPanel] = useState<'struggling' | 'patterns' | null>('patterns');
+  const [catalogImportResult, setCatalogImportResult] = useState<number | null>(null);
+  const [customImportResult, setCustomImportResult] = useState<number | null>(null);
+  const [expandedPanel, setExpandedPanel] = useState<'struggling' | null>('struggling');
 
   // Calculated stats
-  const activeWords = useMemo(() =>
-    wordBank.words.filter(w => w.isActive !== false),
-    [wordBank.words]
-  );
-
-  const wordStates = useMemo(() =>
-    categorizeWordsByState(activeWords),
-    [activeWords]
-  );
-
   const strugglingWords = useMemo(() =>
     getStrugglingWords(wordBank.words),
     [wordBank.words]
@@ -76,18 +67,14 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     [statistics.errorPatterns]
   );
 
-  const streak = useMemo(() =>
-    calculatePracticeStreak(wordBank.words),
-    [wordBank.words]
-  );
-
-  const recentlyMastered = useMemo(() =>
-    getRecentlyMasteredWords(wordBank.words, 10),
+  // Set of existing word texts (lowercase) for duplicate checking
+  const existingWordTexts = useMemo(() =>
+    new Set(wordBank.words.map(w => w.text.toLowerCase())),
     [wordBank.words]
   );
 
   // Handlers
-  const handleAddWord = (e: React.FormEvent) => {
+  const handleAddWord = async (e: React.FormEvent) => {
     e.preventDefault();
     setWordError('');
 
@@ -97,7 +84,7 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
       return;
     }
 
-    const success = addWord(newWord);
+    const success = await addWord(newWord);
     if (!success) {
       setWordError('This word already exists in your word bank');
       return;
@@ -106,8 +93,8 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     setNewWord('');
   };
 
-  const handleImportGrade = (grade: GradeLevel) => {
-    const count = importGradeWords(grade);
+  const handleImportGrade = async (grade: GradeLevel) => {
+    const count = await importGradeWords(grade);
     setImportResult({ grade, count });
     if (count > 0) {
       setTimeout(() => {
@@ -117,12 +104,27 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     }
   };
 
+  const handleAddFromCatalog = async (words: WordDefinition[]) => {
+    const count = await addWordsFromCatalog(words);
+    setCatalogImportResult(count);
+    setTimeout(() => setCatalogImportResult(null), 3000);
+  };
+
+  const handleImportCustomWords = async (wordTexts: string[]) => {
+    const count = await importCustomWords(wordTexts);
+    setCustomImportResult(count);
+    setTimeout(() => setCustomImportResult(null), 3000);
+  };
+
   const handleExport = () => {
     // Export words as CSV
     const headers = ['Word', 'Status', 'Level', 'Accuracy', 'Attempts', 'Correct', 'Last Practiced'];
     const rows = wordBank.words.map(word => {
-      const accuracy = word.timesUsed > 0
-        ? Math.round((word.timesCorrect / word.timesUsed) * 100)
+      const attempts = word.attemptHistory || [];
+      const totalAttempts = attempts.length;
+      const correctAttempts = attempts.filter(a => a.wasCorrect).length;
+      const accuracy = totalAttempts > 0
+        ? Math.round((correctAttempts / totalAttempts) * 100)
         : 0;
       const status = word.isActive === false ? 'Archived' :
         word.introducedAt === null ? 'Waiting' :
@@ -134,8 +136,8 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
         status,
         word.masteryLevel,
         `${accuracy}%`,
-        word.timesUsed,
-        word.timesCorrect,
+        totalAttempts,
+        correctAttempts,
         word.lastAttemptAt ? new Date(word.lastAttemptAt).toLocaleDateString() : 'Never',
       ];
     });
@@ -150,66 +152,33 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
     URL.revokeObjectURL(url);
   };
 
-  const scrollToPanel = (panel: 'struggling' | 'patterns') => {
-    setExpandedPanel(panel);
+  const scrollToPanel = () => {
+    setExpandedPanel('struggling');
     // Allow time for expand animation, then scroll
     setTimeout(() => {
-      document.getElementById(`panel-${panel}`)?.scrollIntoView({ behavior: 'smooth' });
+      document.getElementById('panel-struggling')?.scrollIntoView({ behavior: 'smooth' });
     }, 100);
   };
 
   return (
-    <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => navigate('/')}
-            variant="secondary"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft size={20} />
-            Back
-          </Button>
+    <div className={hideHeader ? '' : 'flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full'}>
+      {/* Header - only show if not hidden */}
+      {!hideHeader && (
+        <div className="mb-6">
           <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-            Word Bank Analytics
+            Word Bank Management
           </h1>
         </div>
-
-        {/* Child Mode toggle */}
-        <button
-          onClick={onSwitchToChildMode}
-          className="flex items-center gap-2 px-4 py-2 rounded-lg bg-indigo-100 hover:bg-indigo-200
-                   text-indigo-700 hover:text-indigo-800 transition-colors text-sm font-medium"
-        >
-          <User size={18} />
-          <span className="hidden sm:inline">Child Mode</span>
-        </button>
-      </div>
+      )}
 
       {/* Main content */}
       <div className="space-y-6">
-        {/* Quick Stats + Attention Alert */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
-          <div className="lg:col-span-2">
-            <QuickStatsDashboard
-              totalWords={activeWords.length}
-              masteredWords={wordStates.mastered.length}
-              streak={streak}
-            />
-          </div>
-          <div className="lg:col-span-1">
-            <AttentionNeededAlert
-              strugglingWordCount={strugglingWords.length}
-              errorPatternCount={errorPatternCount}
-              onViewDetails={() => scrollToPanel('struggling')}
-            />
-          </div>
-        </div>
-
-        {/* Activity Heatmap */}
-        <ActivityHeatmap words={wordBank.words} />
+        {/* Attention Alert */}
+        <AttentionNeededAlert
+          strugglingWordCount={strugglingWords.length}
+          errorPatternCount={errorPatternCount}
+          onViewDetails={scrollToPanel}
+        />
 
         {/* Struggling Words Panel */}
         <div id="panel-struggling">
@@ -222,25 +191,21 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
           />
         </div>
 
-        {/* Error Pattern Analysis */}
-        <div id="panel-patterns">
-          <ErrorPatternAnalysis
-            patterns={statistics.errorPatterns}
-            isExpanded={expandedPanel === 'patterns'}
-            onToggleExpand={() => setExpandedPanel(expandedPanel === 'patterns' ? null : 'patterns')}
-          />
-        </div>
-
-        {/* Recommendations */}
-        <RecommendationsPanel
-          words={wordBank.words}
-          errorPatterns={statistics.errorPatterns}
-          recentMasteredCount={recentlyMastered.length}
-        />
-
         {/* Add Word Form + Import Actions */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
           <h3 className="font-semibold text-gray-800 mb-4">Add Words</h3>
+
+          {/* Success messages */}
+          {catalogImportResult !== null && (
+            <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg">
+              Added {catalogImportResult} word{catalogImportResult === 1 ? '' : 's'} from the catalog!
+            </div>
+          )}
+          {customImportResult !== null && (
+            <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg">
+              Imported {customImportResult} word{customImportResult === 1 ? '' : 's'}!
+            </div>
+          )}
 
           <form onSubmit={handleAddWord} className="flex gap-3 mb-4">
             <div className="flex-1">
@@ -270,6 +235,14 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
 
           <div className="flex flex-wrap gap-3">
             <Button
+              onClick={() => setShowCatalogModal(true)}
+              variant="secondary"
+              className="flex items-center gap-2"
+            >
+              <BookOpen size={18} />
+              Browse Word Catalog
+            </Button>
+            <Button
               onClick={() => setShowGradeModal(true)}
               variant="secondary"
               className="flex items-center gap-2"
@@ -296,6 +269,12 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
               </Button>
             )}
           </div>
+
+          {/* Spelling List Import */}
+          <SpellingListImport
+            existingWords={existingWordTexts}
+            onImport={handleImportCustomWords}
+          />
         </div>
 
         {/* Word Management Table */}
@@ -391,6 +370,14 @@ export function ParentWordBank({ onSwitchToChildMode }: ParentWordBankProps) {
         onForceIntroduce={forceIntroduceWord}
         onArchive={archiveWord}
         onUnarchive={unarchiveWord}
+      />
+
+      {/* Word catalog modal */}
+      <WordCatalogModal
+        isOpen={showCatalogModal}
+        onClose={() => setShowCatalogModal(false)}
+        existingWords={existingWordTexts}
+        onAddWords={handleAddFromCatalog}
       />
     </div>
   );

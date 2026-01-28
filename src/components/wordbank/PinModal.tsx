@@ -43,6 +43,20 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
     }
   }, [isOpen]);
 
+  // Handle ESC key to close
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   // Focus first input when error clears
   useEffect(() => {
     if (!error && isOpen) {
