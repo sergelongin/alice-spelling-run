@@ -1,7 +1,7 @@
 import { useNavigate } from 'react-router-dom';
 import { Home, Trophy, Calendar, CalendarDays, Users, Clock } from 'lucide-react';
 import { Button } from '../common';
-import { useGameContext } from '@/context/GameContext';
+import { useGameContext } from '@/context/GameContextDB';
 
 // Mock challenge data - will be replaced with real API
 const mockDailyChallenge = {

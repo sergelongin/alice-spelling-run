@@ -1,4 +1,5 @@
 import { Play, Sparkles, Trophy, Check, Plus } from 'lucide-react';
+import { LevelMapProgress } from '@/types/levelMap';
 
 interface HomeHeroMissionProps {
   dueWordCount: number;
@@ -9,6 +10,7 @@ interface HomeHeroMissionProps {
   wordsNeeded: number;
   onPractice: () => void;
   onAddWords: () => void;
+  levelMapProgress?: LevelMapProgress;
 }
 
 /**
@@ -24,6 +26,7 @@ export function HomeHeroMission({
   wordsNeeded,
   onPractice,
   onAddWords,
+  levelMapProgress,
 }: HomeHeroMissionProps) {
   const getState = () => {
     if (!canPlay) {
@@ -82,6 +85,12 @@ export function HomeHeroMission({
 
   const { title, subtitle, gradient, icon, buttonText, onAction } = getState();
 
+  // Progress bar info
+  const showProgress = canPlay && levelMapProgress && !levelMapProgress.isGradeComplete;
+  const progressPercent = levelMapProgress?.percentToNextMilestone ?? 0;
+  const pointsToNext = levelMapProgress?.pointsToNextMilestone ?? 0;
+  const nextMilestone = levelMapProgress?.nextMilestone;
+
   return (
     <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-r ${gradient} p-5 shadow-lg w-full`}>
       {/* Decorative circles */}
@@ -89,6 +98,23 @@ export function HomeHeroMission({
       <div className="absolute -bottom-3 -left-3 w-20 h-20 bg-white/10 rounded-full" />
 
       <div className="relative z-10">
+        {/* Prominent points display */}
+        {canPlay && levelMapProgress && (
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center gap-2">
+              <Trophy className="w-5 h-5 text-amber-300" />
+              <span className="font-bold text-white text-lg">
+                {levelMapProgress.totalPoints} pts
+              </span>
+            </div>
+            {!levelMapProgress.isGradeComplete && nextMilestone && (
+              <span className="text-white/90 text-sm font-medium">
+                {pointsToNext} to {nextMilestone.icon} {nextMilestone.name}
+              </span>
+            )}
+          </div>
+        )}
+
         <div className="flex items-start gap-3">
           <div className="flex-shrink-0 w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center backdrop-blur-sm">
             {icon}
@@ -103,6 +129,31 @@ export function HomeHeroMission({
             </p>
           </div>
         </div>
+
+        {/* Level Map Progress Bar */}
+        {showProgress && nextMilestone && (
+          <div className="mt-3 bg-white/20 rounded-lg p-2">
+            <div className="flex items-center justify-between text-xs text-white/90 mb-1">
+              <span className="font-medium">Progress to {nextMilestone.name}</span>
+              <span>{nextMilestone.icon}</span>
+            </div>
+            <div className="h-2 bg-white/30 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-white rounded-full transition-all duration-500"
+                style={{ width: `${progressPercent}%` }}
+              />
+            </div>
+          </div>
+        )}
+
+        {/* Grade complete celebration */}
+        {canPlay && levelMapProgress?.isGradeComplete && (
+          <div className="mt-3 bg-white/20 rounded-lg p-2 text-center">
+            <span className="text-white font-semibold text-sm">
+              {levelMapProgress.currentMilestone.icon} Grade Master! Keep practicing to stay sharp!
+            </span>
+          </div>
+        )}
 
         <button
           onClick={onAction}

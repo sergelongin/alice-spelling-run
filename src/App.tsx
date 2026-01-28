@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
-import { GameProvider } from './context/GameContext';
+import { GameProvider } from './context/GameContextDB';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Layout } from './components/layout';
 import { ProtectedRoute } from './components/auth';
@@ -21,11 +21,13 @@ import {
   ProfileSelectionScreen,
   ParentDashboardScreen,
   ChildDetailScreen,
+  ChildWordBankScreen,
+  LevelMapScreen,
 } from './components/screens';
 import { AdminAudioScreen } from './components/admin';
 
 // Wrapper component that connects AuthContext to GameProvider
-// This enables child-specific localStorage keys for progress data isolation
+// This enables child-specific data isolation using WatermelonDB
 function GameProviderWithChild({ children }: { children: ReactNode }) {
   const { activeChild } = useAuth();
 
@@ -35,8 +37,9 @@ function GameProviderWithChild({ children }: { children: ReactNode }) {
     return <>{children}</>;
   }
 
-  // Key forces remount when child changes, re-initializing all localStorage reads
+  // Key forces remount when child changes, re-initializing database queries
   // This ensures each child gets their own isolated progress data
+  // Sync is built into GameProvider (WatermelonDB version)
   return (
     <GameProvider key={activeChild.id} childId={activeChild.id}>
       {children}
@@ -90,6 +93,7 @@ function App() {
             >
               <Route index element={<ParentDashboardScreen />} />
               <Route path="child/:childId" element={<ChildDetailScreen />} />
+              <Route path="child/:childId/word-bank" element={<ChildWordBankScreen />} />
             </Route>
 
             {/* Admin routes (super_admin only) */}
@@ -129,6 +133,7 @@ function App() {
               <Route path="victory" element={<VictoryScreen />} />
               <Route path="game-over" element={<GameOverScreen />} />
               <Route path="statistics" element={<StatisticsScreen />} />
+              <Route path="level-map" element={<LevelMapScreen />} />
               {/* Game mode routes */}
               <Route path="practice-complete" element={<PracticeCompleteScreen />} />
               <Route path="wildlands" element={<WildlandsHubScreen />} />

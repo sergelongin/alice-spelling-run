@@ -1,30 +1,26 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useGameContext } from '@/context/GameContext';
+import { useGameContext } from '@/context/GameContextDB';
 import { GameModeId } from '@/types';
 import {
-  HomeBackground,
   HomeCharacterScene,
   NewUserWelcome,
   ModeCards,
   HomeHeroMission,
-  MotivationalProgress,
 } from '@/components/home';
+import { LevelMapBackground } from '@/components/levelMap';
 import {
   getWordsDueCount,
   countMasteredWords,
-  calculateAchievements,
 } from '@/types/achievements';
 import { canIntroduceNewWords } from '@/utils/wordSelection';
+import { calculateLevelMapProgress } from '@/utils/levelMapUtils';
 
 export function HomeScreen() {
   const navigate = useNavigate();
-  const { wordBank, statistics, hasCompletedCalibration } = useGameContext();
+  const { wordBank, statistics, learningProgress, hasCompletedCalibration, isLoading } = useGameContext();
 
-  const wordCount = wordBank.words.length;
-  const canPlay = wordCount >= 5;
-  const needsCalibration = !hasCompletedCalibration && wordCount < 5;
-
+  // ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURNS
   // Derived data
   const activeWords = useMemo(() =>
     wordBank.words.filter(w => w.isActive !== false),
@@ -46,32 +42,24 @@ export function HomeScreen() {
     [wordBank.words]
   );
 
-  const achievements = useMemo(() =>
-    calculateAchievements(wordBank.words, statistics),
-    [wordBank.words, statistics]
+  // Level map progress for hero mission card
+  const levelMapProgress = useMemo(() =>
+    calculateLevelMapProgress(learningProgress),
+    [learningProgress]
   );
 
-  // Find next unearned streak achievement
-  const nextStreakAchievement = useMemo(() => {
-    const unearnedStreak = achievements
-      .filter(a => a.id.startsWith('streak-master') && !a.isEarned)
-      .sort((a, b) => (a.tier || 0) - (b.tier || 0));
-    return unearnedStreak[0] || null;
-  }, [achievements]);
+  // Show loading spinner while WatermelonDB subscriptions initialize
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto" />
+      </div>
+    );
+  }
 
-  // Find next unearned mastery achievement
-  const nextMasteryAchievement = useMemo(() => {
-    const unearnedMastery = achievements
-      .filter(a => a.id.startsWith('word-wizard') && !a.isEarned)
-      .sort((a, b) => (a.tier || 0) - (b.tier || 0));
-    return unearnedMastery[0] || null;
-  }, [achievements]);
-
-  // Check if all achievements are earned
-  const allBadgesEarned = useMemo(() =>
-    achievements.every(a => a.isEarned),
-    [achievements]
-  );
+  const wordCount = wordBank.words.length;
+  const canPlay = wordCount >= 5;
+  const needsCalibration = !hasCompletedCalibration && wordCount < 5;
 
 
   const handleModeSelect = (modeId: GameModeId) => {
@@ -106,7 +94,7 @@ export function HomeScreen() {
   };
 
   return (
-    <HomeBackground>
+    <LevelMapBackground>
       <div className="flex flex-col items-center px-4 pt-4 pb-24 gap-4 max-w-2xl mx-auto w-full">
         {/* Compact character scene */}
         <HomeCharacterScene
@@ -125,6 +113,7 @@ export function HomeScreen() {
           wordsNeeded={Math.max(0, 5 - wordCount)}
           onPractice={handleStartPractice}
           onAddWords={handleAddWords}
+          levelMapProgress={levelMapProgress}
         />
 
         {/* Chase Mode - optional secondary action */}
@@ -134,18 +123,7 @@ export function HomeScreen() {
             disabled={!canPlay}
           />
         )}
-
-        {/* Goal-oriented progress - combines streak + mastery badges */}
-        {(statistics.streakCurrent > 0 || nextMasteryAchievement || allBadgesEarned) && (
-          <MotivationalProgress
-            streak={statistics.streakCurrent}
-            masteredCount={masteredCount}
-            nextStreakAchievement={nextStreakAchievement}
-            nextMasteryAchievement={nextMasteryAchievement}
-            allBadgesEarned={allBadgesEarned}
-          />
-        )}
       </div>
-    </HomeBackground>
+    </LevelMapBackground>
   );
 }

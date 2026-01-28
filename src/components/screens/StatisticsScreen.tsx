@@ -3,7 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { Trophy, Calendar, Target, Flame, Flower2, TreePalm, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../common';
 import { AccuracyTrendChart, GameSessionDialog } from '../statistics';
-import { useGameContext } from '@/context/GameContext';
+import { useFreshGameData } from '@/hooks';
 import { TrophyTier, StatsModeId, ModeStatistics, GameResult, createInitialModeStatistics } from '@/types';
 import { getTrophyEmoji, getTrophyColor } from '@/utils';
 
@@ -29,10 +29,19 @@ const MODE_TABS: ModeTab[] = [
 
 export function StatisticsScreen() {
   const navigate = useNavigate();
-  const { statistics } = useGameContext();
+  const { statistics, isLoading } = useFreshGameData();
   const [activeTab, setActiveTab] = useState<TabId>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGame, setSelectedGame] = useState<GameResult | null>(null);
+
+  // Show loading spinner while WatermelonDB subscriptions initialize
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto" />
+      </div>
+    );
+  }
 
   // Get stats for the active tab
   const getActiveStats = (): ModeStatistics => {

@@ -158,21 +158,12 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
     );
   }
 
-  const learningPercent = total > 0 ? (learning.length / total) * 100 : 0;
-  const reviewPercent = total > 0 ? (review.length / total) * 100 : 0;
-  const masteredPercent = total > 0 ? (mastered.length / total) * 100 : 0;
-
-  // Calculate runner position (percentage from left)
-  // Runner moves from learning -> review -> mastered
-  const runnerPosition = (reviewPercent / 2) + masteredPercent;
-
   const categories = [
     {
       state: 'learning' as WordState,
       label: 'Learning',
       count: learning.length,
       words: learning,
-      color: 'bg-orange-400',
       lightColor: 'bg-orange-100',
       textColor: 'text-orange-600',
       icon: <BookOpen size={16} />,
@@ -182,7 +173,6 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
       label: 'Reviewing',
       count: review.length,
       words: review,
-      color: 'bg-blue-400',
       lightColor: 'bg-blue-100',
       textColor: 'text-blue-600',
       icon: <Sparkles size={16} />,
@@ -192,7 +182,6 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
       label: 'Mastered',
       count: mastered.length,
       words: mastered,
-      color: 'bg-green-400',
       lightColor: 'bg-green-100',
       textColor: 'text-green-600',
       icon: <Star size={16} />,
@@ -203,41 +192,8 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
     <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
       <h3 className="text-lg font-bold text-gray-800 mb-4">My Progress</h3>
 
-      {/* Progress bar */}
-      <div className="relative h-4 bg-gray-100 rounded-full overflow-hidden mb-2">
-        <div className="flex h-full">
-          {learning.length > 0 && (
-            <div
-              className="bg-gradient-to-r from-orange-400 to-orange-500 transition-all duration-500"
-              style={{ width: `${learningPercent}%` }}
-            />
-          )}
-          {review.length > 0 && (
-            <div
-              className="bg-gradient-to-r from-blue-400 to-blue-500 transition-all duration-500"
-              style={{ width: `${reviewPercent}%` }}
-            />
-          )}
-          {mastered.length > 0 && (
-            <div
-              className="bg-gradient-to-r from-green-400 to-green-500 transition-all duration-500"
-              style={{ width: `${masteredPercent}%` }}
-            />
-          )}
-        </div>
-
-        {/* Runner indicator */}
-        <div
-          className="absolute top-1/2 -translate-y-1/2 w-6 h-6 bg-white rounded-full shadow-lg
-                     border-2 border-gray-200 transition-all duration-500 flex items-center justify-center"
-          style={{ left: `calc(${Math.min(95, Math.max(5, 100 - runnerPosition))}% - 12px)` }}
-        >
-          <span className="text-xs">🏃</span>
-        </div>
-      </div>
-
       {/* Category buttons */}
-      <div className="grid grid-cols-3 gap-3 mt-4">
+      <div className="grid grid-cols-3 gap-3">
         {categories.map(cat => (
           <button
             key={cat.state}

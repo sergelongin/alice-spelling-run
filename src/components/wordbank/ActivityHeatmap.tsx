@@ -125,7 +125,7 @@ export function ActivityHeatmap({ words }: ActivityHeatmapProps) {
 
       {/* Chart container with horizontal scroll on mobile */}
       <div className="overflow-x-auto">
-        <div className="inline-block min-w-full">
+        <div className="relative inline-block min-w-full">
           {/* Month labels */}
           <div className="flex mb-2 ml-6">
             {monthLabels.map(({ month, weekIndex }) => (
@@ -134,7 +134,7 @@ export function ActivityHeatmap({ words }: ActivityHeatmapProps) {
                 className="text-xs text-gray-500"
                 style={{
                   position: 'absolute',
-                  left: `${weekIndex * 14 + 24}px`,
+                  left: `${weekIndex * 16 + 20}px`,
                 }}
               >
                 {month}

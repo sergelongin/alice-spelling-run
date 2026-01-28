@@ -6,8 +6,8 @@ import { TodaysMissionCard } from './TodaysMissionCard';
 import { ProgressJourney } from './ProgressJourney';
 import { AchievementBadges } from './AchievementBadges';
 import { StarWordsShowcase } from './StarWordsShowcase';
-import { AlmostThereSection } from './AlmostThereSection';
-import { useGameContext } from '@/context/GameContext';
+import { useGameContext } from '@/context/GameContextDB';
+import { useFreshGameData } from '@/hooks';
 import {
   calculateAchievements,
   getRecentlyMasteredWords,
@@ -22,17 +22,12 @@ import { Word } from '@/types';
  */
 export function ChildWordBank() {
   const navigate = useNavigate();
-  const {
-    wordBank,
-    statistics,
-    forceIntroduceWord,
-    archiveWord,
-    unarchiveWord,
-  } = useGameContext();
+  const { wordBank, statistics, isLoading } = useFreshGameData();
+  const { forceIntroduceWord, archiveWord, unarchiveWord } = useGameContext();
 
   const [selectedWord, setSelectedWord] = React.useState<Word | null>(null);
 
-  // Calculate derived data
+  // Calculate derived data - ALL hooks must run before any early return
   const activeWords = useMemo(() =>
     wordBank.words.filter(w => w.isActive !== false),
     [wordBank.words]
@@ -62,6 +57,16 @@ export function ChildWordBank() {
     getRecentlyMasteredWords(wordBank.words, 8),
     [wordBank.words]
   );
+
+  // Show loading spinner while WatermelonDB subscriptions initialize
+  // IMPORTANT: This early return is AFTER all hooks (per React rules of hooks)
+  if (isLoading) {
+    return (
+      <div className="flex-1 flex items-center justify-center">
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-green-500 mx-auto" />
+      </div>
+    );
+  }
 
   const handlePractice = () => {
     // Navigate to game with meadow mode (practice mode)
@@ -98,9 +103,6 @@ export function ChildWordBank() {
           <div className="md:hidden">
             <AchievementBadges achievements={achievements} />
           </div>
-
-          {/* Almost There Section - positive framing for struggling words */}
-          <AlmostThereSection words={wordBank.words} />
 
           {/* Progress Journey */}
           <ProgressJourney

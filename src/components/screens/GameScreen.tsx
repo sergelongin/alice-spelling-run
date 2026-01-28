@@ -13,7 +13,7 @@ import {
   ConfettiEffect,
   MeadowCanvas,
 } from '../game';
-import { useGameContext } from '@/context/GameContext';
+import { useGameContext } from '@/context/GameContextDB';
 import { useGameState, useGameTimer, useTextToSpeech, useSpellingHint, useWordContext } from '@/hooks';
 import { selectWordsForSessionDetailed } from '@/utils';
 import { GameModeId, getGameModeConfig } from '@/types';
@@ -46,6 +46,11 @@ export function GameScreen() {
   const [recentlyLostLife, setRecentlyLostLife] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const previousLives = useRef(gameState.lives);
+  // Track if game was already initialized to prevent re-initialization on tab switch
+  const gameInitializedRef = useRef(false);
+  // Track current game status for use in setTimeout callbacks (avoids stale closure)
+  const gameStatusRef = useRef(gameState.status);
+  gameStatusRef.current = gameState.status;
   const previousWrongAttemptsCount = useRef(0);
   // Refs for context escalation tracking (non-Meadow modes)
   const previousWrongAttemptsForContext = useRef(0);
@@ -128,6 +133,11 @@ export function GameScreen() {
 
   // Initialize game on mount
   useEffect(() => {
+    // Don't re-initialize if game was already initialized (prevents reset on status change)
+    if (gameInitializedRef.current) {
+      return;
+    }
+
     const { words, wordsToIntroduce } = selectWordsForSessionDetailed(
       wordBank.words,
       modeConfig.maxWordsPerSession
@@ -141,7 +151,15 @@ export function GameScreen() {
       markWordsAsIntroduced(wordsToIntroduce);
     }
     startGame(words, modeConfig);
-  }, [modeId]);
+    gameInitializedRef.current = true;
+  }, [modeId, gameState.status]);
+
+  // Reset the initialized ref when game ends or component unmounts
+  useEffect(() => {
+    return () => {
+      gameInitializedRef.current = false;
+    };
+  }, []);
 
   // Start timer when game starts (only for timed modes)
   useEffect(() => {
@@ -172,10 +190,14 @@ export function GameScreen() {
       // After confetti, proceed to next word
       const timeout = setTimeout(() => {
         hideConfetti();
-        nextWord();
-        if (modeConfig.hasTimer) {
-          timer.reset();
-          timer.start();
+        // Check CURRENT status via ref to avoid stale closure issue
+        // Game may have transitioned to 'won' while confetti was showing
+        if (gameStatusRef.current === 'playing') {
+          nextWord();
+          if (modeConfig.hasTimer) {
+            timer.reset();
+            timer.start();
+          }
         }
       }, 2000);
 
@@ -253,19 +275,21 @@ export function GameScreen() {
   // Speak the escalated context after it changes (due to wrong attempt)
   useEffect(() => {
     // Only auto-speak when context level increases (not on reset or initial)
+    // Skip speaking context when hint is available (hint takes priority)
     if (
       contextLevel !== 'word' &&
       contextLevel !== previousContextLevel.current &&
       currentWordData &&
-      ttsSupported
+      ttsSupported &&
+      !hint // Don't speak context if hint exists - hint has priority
     ) {
       const pronunciation = formatPronunciation(currentWordData);
       speak(pronunciation);
     }
     previousContextLevel.current = contextLevel;
-  }, [contextLevel, currentWordData, ttsSupported, formatPronunciation, speak]);
+  }, [contextLevel, currentWordData, ttsSupported, formatPronunciation, speak, hint]);
 
-  // Record wrong attempts immediately to localStorage (for all modes)
+  // Record wrong attempts immediately to database (for all modes)
   useEffect(() => {
     const currentWord = getCurrentWord();
     if (!currentWord) return;
@@ -274,7 +298,7 @@ export function GameScreen() {
     if (gameState.wrongAttempts.length > previousRecordedWrongAttempts.current) {
       const latestAttempt = gameState.wrongAttempts[gameState.wrongAttempts.length - 1];
       if (latestAttempt) {
-        recordWordAttempt(currentWord, latestAttempt.input, false, modeId);
+        void recordWordAttempt(currentWord, latestAttempt.input, false, modeId);
       }
     }
     previousRecordedWrongAttempts.current = gameState.wrongAttempts.length;
@@ -285,7 +309,7 @@ export function GameScreen() {
     if (gameState.completedWords.length > previousCompletedCount.current) {
       const latestCompleted = gameState.completedWords[gameState.completedWords.length - 1];
       if (latestCompleted) {
-        recordWordAttempt(
+        void recordWordAttempt(
           latestCompleted.word,
           gameState.currentInput, // Record actual typed input
           true,
@@ -302,25 +326,28 @@ export function GameScreen() {
     if (gameState.status === 'won' || gameState.status === 'lost') {
       timer.pause();
       const result = getGameResult(modeId);
-      if (result) {
-        recordGame(result);
-      }
 
-      // Navigate to appropriate end screen based on mode
-      const timeout = setTimeout(() => {
-        if (modeId === 'meadow') {
-          // Meadow mode goes to practice complete screen
-          navigate('/practice-complete', { state: { result, mode: modeId } });
-        } else {
-          navigate(gameState.status === 'won' ? '/victory' : '/game-over', {
-            state: { result, mode: modeId },
-          });
+      // Record game and then navigate (await DB write to ensure data is persisted)
+      (async () => {
+        if (result) {
+          await recordGame(result);
         }
-      }, gameState.status === 'lost' ? 2000 : 500);
 
-      return () => clearTimeout(timeout);
+        // Navigate to appropriate end screen based on mode after a delay
+        const delay = gameState.status === 'lost' ? 2000 : 500;
+        setTimeout(() => {
+          if (modeId === 'meadow') {
+            // Meadow mode goes to practice complete screen
+            navigate('/practice-complete', { state: { result, mode: modeId } });
+          } else {
+            navigate(gameState.status === 'won' ? '/victory' : '/game-over', {
+              state: { result, mode: modeId },
+            });
+          }
+        }, delay);
+      })();
     }
-  }, [gameState.status, modeId]);
+  }, [gameState.status, modeId, recordGame, timer, getGameResult, navigate]);
 
   const handleRepeat = useCallback(async () => {
     const currentWord = getCurrentWord();

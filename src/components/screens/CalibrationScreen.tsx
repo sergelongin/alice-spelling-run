@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useCalibration } from '@/hooks';
-import { useGameContext } from '@/context/GameContext';
+import { useGameContext } from '@/context/GameContextDB';
 import { GradeLevel } from '@/data/gradeWords';
 import {
   CalibrationWelcome,
@@ -80,13 +80,13 @@ export function CalibrationScreen() {
   };
 
   // Handle confirming results and importing words
-  const handleConfirmResults = () => {
+  const handleConfirmResults = async () => {
     if (result) {
       // Import the recommended grade words
-      importGradeWords(result.recommendedGrade);
+      await importGradeWords(result.recommendedGrade);
 
       // Mark calibration as complete
-      setCalibrationComplete(result);
+      await setCalibrationComplete(result);
 
       // Navigate to home
       navigate('/');

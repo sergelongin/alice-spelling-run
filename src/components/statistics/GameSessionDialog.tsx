@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { X, Flower2, Star, Clock, Calendar, TreePalm, Trophy } from 'lucide-react';
 import { GameResult } from '@/types';
 import { getTrophyEmoji } from '@/utils';
@@ -58,6 +59,20 @@ function WordAttemptRow({ word, wrongAttempts }: { word: string; wrongAttempts: 
 }
 
 export function GameSessionDialog({ game, isOpen, onClose }: GameSessionDialogProps) {
+  // Handle ESC key to close
+  useEffect(() => {
+    if (!isOpen) return;
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, [isOpen, onClose]);
+
   if (!isOpen || !game) return null;
 
   const isMeadowGame = game.mode === 'meadow';
