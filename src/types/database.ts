@@ -48,6 +48,9 @@ export interface Database {
           grade_level: number;
           is_active: boolean;
           created_at: string;
+          birth_month: number | null;
+          birth_year: number | null;
+          pending_grade_import: number | null;
         };
         Insert: {
           id?: string;
@@ -56,6 +59,9 @@ export interface Database {
           grade_level: number;
           is_active?: boolean;
           created_at?: string;
+          birth_month?: number | null;
+          birth_year?: number | null;
+          pending_grade_import?: number | null;
         };
         Update: {
           id?: string;
@@ -64,6 +70,9 @@ export interface Database {
           grade_level?: number;
           is_active?: boolean;
           created_at?: string;
+          birth_month?: number | null;
+          birth_year?: number | null;
+          pending_grade_import?: number | null;
         };
         Relationships: [
           {
@@ -89,6 +98,7 @@ export interface Database {
           segment_type: 'word' | 'definition' | 'sentence';
           text_content: string | null;
           created_at: string;
+          updated_at: string;
         };
         Insert: {
           id?: string;
@@ -104,6 +114,7 @@ export interface Database {
           segment_type?: 'word' | 'definition' | 'sentence';
           text_content?: string | null;
           created_at?: string;
+          updated_at?: string;
         };
         Update: {
           id?: string;
@@ -119,6 +130,7 @@ export interface Database {
           segment_type?: 'word' | 'definition' | 'sentence';
           text_content?: string | null;
           created_at?: string;
+          updated_at?: string;
         };
         Relationships: [];
       };
@@ -161,6 +173,275 @@ export interface Database {
             foreignKeyName: 'words_created_by_fkey';
             columns: ['created_by'];
             referencedRelation: 'profiles';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      child_word_progress: {
+        Row: {
+          id: string;
+          child_id: string;
+          word_text: string;
+          mastery_level: number;
+          correct_streak: number;
+          times_used: number;
+          times_correct: number;
+          last_attempt_at: string | null;
+          next_review_at: string;
+          introduced_at: string | null;
+          is_active: boolean;
+          archived_at: string | null;
+          updated_at: string;
+          client_updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          child_id: string;
+          word_text: string;
+          mastery_level?: number;
+          correct_streak?: number;
+          times_used?: number;
+          times_correct?: number;
+          last_attempt_at?: string | null;
+          next_review_at?: string;
+          introduced_at?: string | null;
+          is_active?: boolean;
+          archived_at?: string | null;
+          updated_at?: string;
+          client_updated_at: string;
+        };
+        Update: {
+          id?: string;
+          child_id?: string;
+          word_text?: string;
+          mastery_level?: number;
+          correct_streak?: number;
+          times_used?: number;
+          times_correct?: number;
+          last_attempt_at?: string | null;
+          next_review_at?: string;
+          introduced_at?: string | null;
+          is_active?: boolean;
+          archived_at?: string | null;
+          updated_at?: string;
+          client_updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'child_word_progress_child_id_fkey';
+            columns: ['child_id'];
+            referencedRelation: 'children';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      child_statistics: {
+        Row: {
+          id: string;
+          child_id: string;
+          mode: string;
+          total_games_played: number;
+          total_wins: number;
+          total_words_attempted: number;
+          total_words_correct: number;
+          streak_current: number;
+          streak_best: number;
+          trophy_counts: Record<string, number>;
+          updated_at: string;
+          client_updated_at: string;
+          word_accuracy: Json | null;
+          first_correct_dates: Json | null;
+          personal_bests: Json | null;
+          error_patterns: Json | null;
+        };
+        Insert: {
+          id?: string;
+          child_id: string;
+          mode: string;
+          total_games_played?: number;
+          total_wins?: number;
+          total_words_attempted?: number;
+          total_words_correct?: number;
+          streak_current?: number;
+          streak_best?: number;
+          trophy_counts?: Record<string, number>;
+          updated_at?: string;
+          client_updated_at: string;
+          word_accuracy?: Json | null;
+          first_correct_dates?: Json | null;
+          personal_bests?: Json | null;
+          error_patterns?: Json | null;
+        };
+        Update: {
+          id?: string;
+          child_id?: string;
+          mode?: string;
+          total_games_played?: number;
+          total_wins?: number;
+          total_words_attempted?: number;
+          total_words_correct?: number;
+          streak_current?: number;
+          streak_best?: number;
+          trophy_counts?: Record<string, number>;
+          updated_at?: string;
+          client_updated_at?: string;
+          word_accuracy?: Json | null;
+          first_correct_dates?: Json | null;
+          personal_bests?: Json | null;
+          error_patterns?: Json | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'child_statistics_child_id_fkey';
+            columns: ['child_id'];
+            referencedRelation: 'children';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      child_game_sessions: {
+        Row: {
+          id: string;
+          child_id: string;
+          mode: string;
+          played_at: string;
+          duration_seconds: number | null;
+          words_attempted: number;
+          words_correct: number;
+          won: boolean;
+          trophy: string | null;
+          client_session_id: string;
+          created_at: string;
+          completed_words: Json | null;
+          wrong_attempts: Json | null;
+        };
+        Insert: {
+          id?: string;
+          child_id: string;
+          mode: string;
+          played_at: string;
+          duration_seconds?: number | null;
+          words_attempted: number;
+          words_correct: number;
+          won: boolean;
+          trophy?: string | null;
+          client_session_id: string;
+          created_at?: string;
+          completed_words?: Json | null;
+          wrong_attempts?: Json | null;
+        };
+        Update: {
+          id?: string;
+          child_id?: string;
+          mode?: string;
+          played_at?: string;
+          duration_seconds?: number | null;
+          words_attempted?: number;
+          words_correct?: number;
+          won?: boolean;
+          trophy?: string | null;
+          client_session_id?: string;
+          created_at?: string;
+          completed_words?: Json | null;
+          wrong_attempts?: Json | null;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'child_game_sessions_child_id_fkey';
+            columns: ['child_id'];
+            referencedRelation: 'children';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      child_calibration: {
+        Row: {
+          id: string;
+          child_id: string;
+          completed_at: string;
+          status: string;
+          recommended_grade: number;
+          confidence: string;
+          total_time_ms: number | null;
+          attempts_json: unknown;
+          grade_scores_json: unknown;
+          client_calibration_id: string;
+          created_at: string;
+        };
+        Insert: {
+          id?: string;
+          child_id: string;
+          completed_at: string;
+          status: string;
+          recommended_grade: number;
+          confidence: string;
+          total_time_ms?: number | null;
+          attempts_json?: unknown;
+          grade_scores_json?: unknown;
+          client_calibration_id: string;
+          created_at?: string;
+        };
+        Update: {
+          id?: string;
+          child_id?: string;
+          completed_at?: string;
+          status?: string;
+          recommended_grade?: number;
+          confidence?: string;
+          total_time_ms?: number | null;
+          attempts_json?: unknown;
+          grade_scores_json?: unknown;
+          client_calibration_id?: string;
+          created_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'child_calibration_child_id_fkey';
+            columns: ['child_id'];
+            referencedRelation: 'children';
+            referencedColumns: ['id'];
+          }
+        ];
+      };
+      child_sync_metadata: {
+        Row: {
+          id: string;
+          child_id: string;
+          last_sync_at: string | null;
+          last_word_progress_sync_at: string | null;
+          last_statistics_sync_at: string | null;
+          last_sessions_sync_at: string | null;
+          last_calibration_sync_at: string | null;
+          initial_migration_completed: boolean;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          child_id: string;
+          last_sync_at?: string | null;
+          last_word_progress_sync_at?: string | null;
+          last_statistics_sync_at?: string | null;
+          last_sessions_sync_at?: string | null;
+          last_calibration_sync_at?: string | null;
+          initial_migration_completed?: boolean;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          child_id?: string;
+          last_sync_at?: string | null;
+          last_word_progress_sync_at?: string | null;
+          last_statistics_sync_at?: string | null;
+          last_sessions_sync_at?: string | null;
+          last_calibration_sync_at?: string | null;
+          initial_migration_completed?: boolean;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: 'child_sync_metadata_child_id_fkey';
+            columns: ['child_id'];
+            referencedRelation: 'children';
             referencedColumns: ['id'];
           }
         ];

@@ -6,3 +6,5 @@ export * from './wildlands';
 export * from './spelling';
 export * from './calibration';
 export * from './achievements';
+export * from './sync';
+export * from './levelMap';

@@ -27,6 +27,17 @@ export const MASTERY_INTERVALS: Record<MasteryLevel, number> = {
   5: 30,  // Review monthly (mastered)
 };
 
+// Minimum streak required to advance TO each level
+// Levels 4-5 require proven consistency before longer review intervals
+export const STREAK_REQUIRED_FOR_LEVEL: Record<MasteryLevel, number> = {
+  0: 0,  // N/A
+  1: 1,  // 1 correct to reach level 1
+  2: 1,  // 1 correct to reach level 2
+  3: 1,  // 1 correct to reach level 3
+  4: 2,  // 2 consecutive to reach level 4 (14-day interval)
+  5: 2,  // 2 consecutive to reach Mastered (30-day interval)
+};
+
 export interface Word {
   id: string;
   text: string;
@@ -125,6 +136,9 @@ export const createWord = (text: string, options: CreateWordOptions | boolean = 
 /**
  * Update word mastery after a spelling attempt
  * Based on Leitner system with SM-2 inspired adjustments
+ *
+ * @param word - The word to update
+ * @param wasCorrect - True if spelled correctly on FIRST TRY (same-session retry = false)
  */
 export const updateWordMastery = (word: Word, wasCorrect: boolean): Word => {
   const now = new Date();
@@ -132,9 +146,19 @@ export const updateWordMastery = (word: Word, wasCorrect: boolean): Word => {
   let newStreak: number;
 
   if (wasCorrect) {
-    // Move up one box (max 5)
-    newLevel = Math.min(5, word.masteryLevel + 1) as MasteryLevel;
+    // Increment streak first
     newStreak = word.correctStreak + 1;
+
+    // Check if streak meets requirement for advancement
+    const targetLevel = Math.min(5, word.masteryLevel + 1) as MasteryLevel;
+    const streakRequired = STREAK_REQUIRED_FOR_LEVEL[targetLevel];
+
+    if (newStreak >= streakRequired) {
+      newLevel = targetLevel;
+    } else {
+      // Stay at current level, building streak
+      newLevel = word.masteryLevel;
+    }
   } else {
     // Drop back 2 boxes (min 0) - creates "desirable difficulty"
     newLevel = Math.max(0, word.masteryLevel - 2) as MasteryLevel;

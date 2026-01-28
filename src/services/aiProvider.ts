@@ -243,9 +243,7 @@ export async function generateSpellingHint(request: SpellingHintRequest): Promis
 export function isAIAvailable(): boolean {
   const provider = getProvider();
   const apiKey = getApiKey(provider);
-  const available = !!apiKey;
-  console.log('[AI] isAIAvailable:', { provider, hasKey: !!apiKey, available });
-  return available;
+  return !!apiKey;
 }
 
 /**

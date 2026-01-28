@@ -48,6 +48,9 @@ export function createMockChild(overrides: Partial<ChildProfile> = {}): ChildPro
     grade_level: 4,
     is_active: true,
     created_at: new Date().toISOString(),
+    birth_month: null,
+    birth_year: null,
+    pending_grade_import: null,
     ...overrides,
   };
 }
@@ -228,23 +231,6 @@ export function createSupabaseMock() {
       }),
     },
     from: vi.fn().mockImplementation((table: string) => {
-      const createQueryBuilder = () => ({
-        select: vi.fn().mockReturnThis(),
-        insert: vi.fn().mockReturnThis(),
-        update: vi.fn().mockReturnThis(),
-        delete: vi.fn().mockReturnThis(),
-        eq: vi.fn().mockReturnThis(),
-        order: vi.fn().mockReturnThis(),
-        single: vi.fn().mockImplementation(async () => {
-          if (table === 'profiles') {
-            const profile = mockProfiles[0] || null;
-            return { data: profile, error: profile ? null : { message: 'Profile not found' } };
-          }
-          return { data: null, error: null };
-        }),
-        then: vi.fn(),
-      });
-
       const builder = {
         select: vi.fn().mockImplementation(() => {
           const innerBuilder = {
@@ -257,6 +243,12 @@ export function createSupabaseMock() {
                 return { data: null, error: null };
               }),
               order: vi.fn().mockImplementation(() => ({
+                limit: vi.fn().mockImplementation(async () => {
+                  if (table === 'children') {
+                    return { data: mockChildren, error: null };
+                  }
+                  return { data: [], error: null };
+                }),
                 then: vi.fn(),
                 data: mockChildren,
                 error: null,

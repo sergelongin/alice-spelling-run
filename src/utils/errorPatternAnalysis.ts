@@ -99,7 +99,7 @@ function hasVowelSwap(attempt: string, correct: string): boolean {
   if (attempt.length !== correct.length) return false;
 
   let differences = 0;
-  let swapPositions: number[] = [];
+  const swapPositions: number[] = [];
 
   for (let i = 0; i < correct.length; i++) {
     if (attempt[i] !== correct[i]) {

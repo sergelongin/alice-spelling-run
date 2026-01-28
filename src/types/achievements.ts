@@ -103,27 +103,42 @@ export const ACHIEVEMENT_DEFINITIONS: AchievementDefinition[] = [
 ];
 
 /**
- * Calculate practice streak from word attempt history.
+ * Calculate practice streak from game history and word attempt history.
+ * Uses synced gameHistory as primary source, falls back to local attemptHistory.
  * Returns the current number of consecutive days with practice.
  */
-export function calculatePracticeStreak(words: Word[]): number {
-  // Collect all attempt dates across all words
-  const attemptDates = new Set<string>();
+export function calculatePracticeStreak(words: Word[], statistics?: GameStatistics): number {
+  // Collect all practice dates
+  const practiceeDates = new Set<string>();
 
+  // Primary: Use synced game history dates (preferred, syncs across devices)
+  if (statistics?.modeStats) {
+    for (const modeStat of Object.values(statistics.modeStats)) {
+      if (modeStat.gameHistory) {
+        for (const game of modeStat.gameHistory) {
+          // Extract date (YYYY-MM-DD) from ISO timestamp
+          const date = game.date.split('T')[0];
+          practiceeDates.add(date);
+        }
+      }
+    }
+  }
+
+  // Fallback: Also check local word attempt history
   for (const word of words) {
     if (word.attemptHistory) {
       for (const attempt of word.attemptHistory) {
         // Extract date (YYYY-MM-DD) from timestamp
         const date = attempt.timestamp.split('T')[0];
-        attemptDates.add(date);
+        practiceeDates.add(date);
       }
     }
   }
 
-  if (attemptDates.size === 0) return 0;
+  if (practiceeDates.size === 0) return 0;
 
   // Sort dates in descending order
-  const sortedDates = Array.from(attemptDates).sort().reverse();
+  const sortedDates = Array.from(practiceeDates).sort().reverse();
 
   // Check if today or yesterday has practice (streak must be current)
   const today = new Date().toISOString().split('T')[0];
@@ -161,7 +176,28 @@ export function hasFirstCorrectSpelling(words: Word[]): boolean {
 }
 
 /**
- * Get the date of the first correct spelling
+ * Get the date of the first correct spelling from synced statistics.
+ * This is the preferred source as it syncs across devices.
+ */
+export function getFirstCorrectDateFromStats(statistics: GameStatistics): string | undefined {
+  const firstCorrectDates = statistics.firstCorrectDates;
+  if (!firstCorrectDates || Object.keys(firstCorrectDates).length === 0) {
+    return undefined;
+  }
+
+  // Find the earliest date among all words
+  let earliestDate: string | undefined;
+  for (const date of Object.values(firstCorrectDates)) {
+    if (!earliestDate || date < earliestDate) {
+      earliestDate = date;
+    }
+  }
+  return earliestDate;
+}
+
+/**
+ * Get the date of the first correct spelling from local word data.
+ * Fallback for offline scenarios when synced data isn't available.
  */
 export function getFirstCorrectDate(words: Word[]): string | undefined {
   let earliestDate: string | undefined;
@@ -189,9 +225,24 @@ export function countMasteredWords(words: Word[]): number {
 }
 
 /**
- * Check if any word has been spelled in under 3 seconds
+ * Check if any word has been spelled in under 3 seconds.
+ * Uses synced personalBests data (from statistics) as primary source,
+ * falls back to local attemptHistory for offline scenarios.
  */
-export function hasQuickSpelling(words: Word[]): { achieved: boolean; date?: string } {
+export function hasQuickSpelling(
+  words: Word[],
+  personalBests?: Record<string, { timeMs: number; date: string; attempts: number }>
+): { achieved: boolean; date?: string } {
+  // Primary: Check synced personalBests data (available across all devices)
+  if (personalBests) {
+    for (const [, best] of Object.entries(personalBests)) {
+      if (best.timeMs < 3000) {
+        return { achieved: true, date: best.date };
+      }
+    }
+  }
+
+  // Fallback: Check local attemptHistory (for offline or pre-sync scenarios)
   for (const word of words) {
     if (word.attemptHistory) {
       for (const attempt of word.attemptHistory) {
@@ -230,7 +281,7 @@ export function hasPerfectWeek(words: Word[]): { achieved: boolean; date?: strin
   // Check for 7 consecutive perfect days
   for (let i = 0; i <= dates.length - 7; i++) {
     let consecutive = 0;
-    let startDate = new Date(dates[i]);
+    const startDate = new Date(dates[i]);
 
     for (let j = 0; j < 7; j++) {
       const checkDate = new Date(startDate);
@@ -259,15 +310,17 @@ export function hasPerfectWeek(words: Word[]): { achieved: boolean; date?: strin
 /**
  * Calculate all achievements for a user
  * @param words - All words in the word bank
- * @param _statistics - Game statistics (reserved for future achievements)
+ * @param statistics - Game statistics (includes synced personalBests, firstCorrectDates)
  */
-export function calculateAchievements(words: Word[], _statistics: GameStatistics): Achievement[] {
+export function calculateAchievements(words: Word[], statistics: GameStatistics): Achievement[] {
   const achievements: Achievement[] = [];
-  const streak = calculatePracticeStreak(words);
+  const streak = calculatePracticeStreak(words, statistics);
   const masteredCount = countMasteredWords(words);
   const hasFirst = hasFirstCorrectSpelling(words);
-  const firstDate = getFirstCorrectDate(words);
-  const quickSpell = hasQuickSpelling(words);
+  // Use synced firstCorrectDates as primary, fall back to local attemptHistory
+  const firstDate = getFirstCorrectDateFromStats(statistics) || getFirstCorrectDate(words);
+  // Pass synced personalBests to check for Quick Speller achievement
+  const quickSpell = hasQuickSpelling(words, statistics.personalBests);
   const perfectWeek = hasPerfectWeek(words);
 
   // Streak achievements

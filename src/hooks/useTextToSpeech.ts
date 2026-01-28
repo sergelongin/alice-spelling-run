@@ -3,7 +3,7 @@ import { isSpeechSupported, getVoices, speakWord, cancelSpeech } from '@/utils/s
 import { isCartesiaAvailable, speakWithCartesia, cancelCartesiaSpeech } from '@/services/cartesiaTTS';
 import { isSupabaseConfigured } from '@/lib/supabase';
 import { checkAudioAvailability, downloadAudio } from '@/services/audioStorage';
-import { getCachedAudio, setCachedAudio } from '@/utils/audioCache';
+import { getCachedAudio, setCachedAudio, invalidateCacheEntry } from '@/utils/audioCache';
 
 interface UseTextToSpeechOptions {
   rate?: number;
@@ -90,6 +90,7 @@ export function useTextToSpeech(
 
   /**
    * Try to play audio from Supabase (cached or downloaded)
+   * Validates cache freshness against server updated_at timestamp
    */
   const trySupabaseAudio = useCallback(async (text: string): Promise<boolean> => {
     if (!isSupabaseConfigured()) {
@@ -101,19 +102,34 @@ export function useTextToSpeech(
     try {
       // 1. Check IndexedDB cache first
       const cached = await getCachedAudio(text, voiceId);
-      if (cached?.blobUrl) {
-        console.log('[TTS] Playing from IndexedDB cache:', text);
-        await playAudioFromUrl(cached.blobUrl);
-        return true;
-      }
 
-      // 2. Check Supabase for pre-generated audio
+      // 2. Always check Supabase for current version (needed for cache validation)
       const availability = await checkAudioAvailability(text, voiceId);
       if (!availability.exists || !availability.pronunciation) {
         return false;
       }
 
-      // 3. Download and cache the audio
+      // 3. Validate cache freshness if we have a cached entry
+      if (cached) {
+        const serverUpdatedAt = availability.updatedAt
+          ? new Date(availability.updatedAt).getTime()
+          : 0;
+
+        // Check if server has newer audio (or if cached entry lacks serverUpdatedAt)
+        const cachedUpdatedAt = cached.entry.serverUpdatedAt || 0;
+        if (serverUpdatedAt > cachedUpdatedAt) {
+          console.log('[TTS] Server has newer audio, invalidating cache:', text);
+          await invalidateCacheEntry(text, voiceId);
+        } else {
+          // Cache is still valid - use it
+          console.log('[TTS] Playing from IndexedDB cache:', text);
+          await playAudioFromUrl(cached.blobUrl);
+          URL.revokeObjectURL(cached.blobUrl);
+          return true;
+        }
+      }
+
+      // 4. Download and cache the audio
       const storagePath = availability.pronunciation.storage_path;
       const blob = await downloadAudio(storagePath);
 
@@ -122,13 +138,18 @@ export function useTextToSpeech(
         return false;
       }
 
-      // Create blob URL and cache it
-      const blobUrl = URL.createObjectURL(blob);
-      await setCachedAudio(text, voiceId, blobUrl, storagePath);
+      // Cache the blob data with server timestamp
+      const serverUpdatedAt = availability.updatedAt
+        ? new Date(availability.updatedAt).getTime()
+        : Date.now();
+      await setCachedAudio(text, voiceId, blob, storagePath, serverUpdatedAt);
 
-      // Play the audio
+      // Create blob URL for playback
+      const blobUrl = URL.createObjectURL(blob);
       console.log('[TTS] Playing downloaded Supabase audio:', text);
       await playAudioFromUrl(blobUrl);
+      // Revoke the blob URL after playback to free memory
+      URL.revokeObjectURL(blobUrl);
       return true;
 
     } catch (err) {
