@@ -1,13 +1,10 @@
-import { useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { AlertTriangle, Clock, BookX } from 'lucide-react';
+import { Q } from '@nozbe/watermelondb';
+import { database } from '@/db';
+import type { WordProgress } from '@/db/models';
 import type { ChildProfile } from '@/types/auth';
 import type { AttentionItem } from '@/types/parent';
-import {
-  getChildWordBank,
-  getLastActivityDate,
-  getDaysSinceActivity,
-  getStrugglingWordsList,
-} from '@/utils/childDataReader';
 
 interface AttentionNeededListProps {
   children: ChildProfile[];
@@ -17,48 +14,100 @@ interface AttentionNeededListProps {
  * List of issues that need parent attention across all children
  */
 export function AttentionNeededList({ children }: AttentionNeededListProps) {
-  const attentionItems = useMemo(() => {
-    const items: AttentionItem[] = [];
+  const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
 
-    for (const child of children) {
-      const wordBank = getChildWordBank(child.id);
-      const lastActivity = getLastActivityDate(wordBank);
-      const daysSince = getDaysSinceActivity(lastActivity);
-      const strugglingWords = getStrugglingWordsList(wordBank);
-
-      // Check for inactivity
-      if (daysSince !== null && daysSince >= 3) {
-        items.push({
-          type: 'inactivity',
-          childId: child.id,
-          childName: child.name,
-          message: `${child.name} hasn't practiced in ${daysSince} day${daysSince === 1 ? '' : 's'}`,
-          severity: daysSince >= 7 ? 'alert' : 'warning',
-        });
-      }
-
-      // Check for struggling words
-      if (strugglingWords.length >= 3) {
-        const wordList = strugglingWords.slice(0, 3).map(w => `"${w}"`).join(', ');
-        const moreCount = strugglingWords.length - 3;
-        items.push({
-          type: 'struggling-words',
-          childId: child.id,
-          childName: child.name,
-          message: `${child.name} is struggling with ${wordList}${moreCount > 0 ? ` and ${moreCount} more` : ''}`,
-          severity: strugglingWords.length >= 5 ? 'alert' : 'warning',
-        });
-      }
+  // Subscribe to word progress for all children to compute attention items
+  useEffect(() => {
+    if (children.length === 0) {
+      setAttentionItems([]);
+      return;
     }
 
-    // Sort by severity (alerts first)
-    items.sort((a, b) => {
-      if (a.severity === 'alert' && b.severity !== 'alert') return -1;
-      if (a.severity !== 'alert' && b.severity === 'alert') return 1;
-      return 0;
-    });
+    const childIds = children.map(c => c.id);
+    const collection = database.get<WordProgress>('word_progress');
 
-    return items;
+    const subscription = collection
+      .query(Q.where('child_id', Q.oneOf(childIds)))
+      .observe()
+      .subscribe(records => {
+        const items: AttentionItem[] = [];
+
+        // Group records by child
+        const recordsByChild = new Map<string, WordProgress[]>();
+        for (const record of records) {
+          const existing = recordsByChild.get(record.childId) || [];
+          existing.push(record);
+          recordsByChild.set(record.childId, existing);
+        }
+
+        // Analyze each child
+        for (const child of children) {
+          const childRecords = recordsByChild.get(child.id) || [];
+
+          // Calculate last activity date
+          let lastActivityTs: number | null = null;
+          for (const wp of childRecords) {
+            if (wp.lastAttemptAtRaw && (!lastActivityTs || wp.lastAttemptAtRaw > lastActivityTs)) {
+              lastActivityTs = wp.lastAttemptAtRaw;
+            }
+          }
+
+          // Calculate days since activity
+          let daysSince: number | null = null;
+          if (lastActivityTs) {
+            const diffMs = Date.now() - lastActivityTs;
+            daysSince = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+          }
+
+          // Find struggling words (low accuracy, has been attempted)
+          const strugglingWords: string[] = [];
+          for (const wp of childRecords) {
+            if (wp.isActive === false) continue;
+            const attempts = wp.attemptHistory || [];
+            if (attempts.length < 2) continue;
+            const correctCount = attempts.filter(a => a.wasCorrect).length;
+            const accuracy = attempts.length > 0 ? (correctCount / attempts.length) * 100 : 100;
+            if (accuracy < 60) {
+              strugglingWords.push(wp.wordText);
+            }
+          }
+
+          // Check for inactivity
+          if (daysSince !== null && daysSince >= 3) {
+            items.push({
+              type: 'inactivity',
+              childId: child.id,
+              childName: child.name,
+              message: `${child.name} hasn't practiced in ${daysSince} day${daysSince === 1 ? '' : 's'}`,
+              severity: daysSince >= 7 ? 'alert' : 'warning',
+            });
+          }
+
+          // Check for struggling words
+          if (strugglingWords.length >= 3) {
+            const wordList = strugglingWords.slice(0, 3).map(w => `"${w}"`).join(', ');
+            const moreCount = strugglingWords.length - 3;
+            items.push({
+              type: 'struggling-words',
+              childId: child.id,
+              childName: child.name,
+              message: `${child.name} is struggling with ${wordList}${moreCount > 0 ? ` and ${moreCount} more` : ''}`,
+              severity: strugglingWords.length >= 5 ? 'alert' : 'warning',
+            });
+          }
+        }
+
+        // Sort by severity (alerts first)
+        items.sort((a, b) => {
+          if (a.severity === 'alert' && b.severity !== 'alert') return -1;
+          if (a.severity !== 'alert' && b.severity === 'alert') return 1;
+          return 0;
+        });
+
+        setAttentionItems(items);
+      });
+
+    return () => subscription.unsubscribe();
   }, [children]);
 
   if (attentionItems.length === 0) {

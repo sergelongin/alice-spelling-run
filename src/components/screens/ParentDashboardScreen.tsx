@@ -1,14 +1,12 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { ArrowLeft, Plus } from 'lucide-react';
+import { Plus } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { useParentDashboardAccess } from '@/hooks';
 import { PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
 import { EditProfileModal, DeleteConfirmDialog } from '@/components/profiles';
-import { ChildSummaryCard } from '@/components/parent/ChildSummaryCard';
-import { FamilyOverview } from '@/components/parent/FamilyOverview';
-import { AttentionNeededList } from '@/components/parent/AttentionNeededList';
+import { ChildSummaryCard, FamilyOverview, AttentionNeededList } from '@/components/parent';
 import type { ChildProfile } from '@/types/auth';
 
 /**
@@ -88,24 +86,6 @@ export function ParentDashboardScreen() {
 
   return (
     <div className="flex-1 p-4 md:p-8 max-w-6xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div className="flex items-center gap-3">
-          <Button
-            onClick={() => navigate('/')}
-            variant="secondary"
-            size="sm"
-            className="flex items-center gap-2"
-          >
-            <ArrowLeft size={20} />
-            Home
-          </Button>
-          <h1 className="text-2xl md:text-3xl font-bold text-gray-800">
-            Parent Dashboard
-          </h1>
-        </div>
-      </div>
-
       {/* Main content */}
       <div className="space-y-6">
         {/* Children section header */}

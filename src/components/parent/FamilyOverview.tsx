@@ -1,45 +1,83 @@
-import { useMemo } from 'react';
+import { useState, useEffect } from 'react';
 import { BookOpen, Star, Target, Users } from 'lucide-react';
+import { Q } from '@nozbe/watermelondb';
+import { database } from '@/db';
+import type { WordProgress } from '@/db/models';
 import type { ChildProfile } from '@/types/auth';
-import {
-  getChildWordBank,
-  countActiveWords,
-  countMasteredWords,
-} from '@/utils/childDataReader';
 
 interface FamilyOverviewProps {
   children: ChildProfile[];
+}
+
+interface FamilyStats {
+  totalWords: number;
+  totalMastered: number;
+  averageAccuracy: number;
+  childCount: number;
 }
 
 /**
  * Aggregate statistics across all children
  */
 export function FamilyOverview({ children }: FamilyOverviewProps) {
-  const overview = useMemo(() => {
-    let totalWords = 0;
-    let totalMastered = 0;
-    let totalCorrect = 0;
-    let totalAttempts = 0;
+  const [overview, setOverview] = useState<FamilyStats>({
+    totalWords: 0,
+    totalMastered: 0,
+    averageAccuracy: 0,
+    childCount: children.length,
+  });
 
-    for (const child of children) {
-      const wordBank = getChildWordBank(child.id);
-      totalWords += countActiveWords(wordBank);
-      totalMastered += countMasteredWords(wordBank);
-
-      for (const word of wordBank.words) {
-        totalCorrect += word.timesCorrect;
-        totalAttempts += word.timesUsed;
-      }
+  // Subscribe to word progress for all children
+  useEffect(() => {
+    if (children.length === 0) {
+      setOverview({
+        totalWords: 0,
+        totalMastered: 0,
+        averageAccuracy: 0,
+        childCount: 0,
+      });
+      return;
     }
 
-    const averageAccuracy = totalAttempts > 0 ? Math.round((totalCorrect / totalAttempts) * 100) : 0;
+    const childIds = children.map(c => c.id);
+    const collection = database.get<WordProgress>('word_progress');
 
-    return {
-      totalWords,
-      totalMastered,
-      averageAccuracy,
-      childCount: children.length,
-    };
+    // Query all word progress for all children
+    const subscription = collection
+      .query(Q.where('child_id', Q.oneOf(childIds)))
+      .observe()
+      .subscribe(records => {
+        let totalWords = 0;
+        let totalMastered = 0;
+        let totalCorrect = 0;
+        let totalAttempts = 0;
+
+        for (const wp of records) {
+          // Only count active words
+          if (wp.isActive !== false) {
+            totalWords++;
+            if (wp.masteryLevel === 5) {
+              totalMastered++;
+            }
+          }
+
+          // Count attempts from attempt history
+          const attempts = wp.attemptHistory || [];
+          totalAttempts += attempts.length;
+          totalCorrect += attempts.filter(a => a.wasCorrect).length;
+        }
+
+        const averageAccuracy = totalAttempts > 0 ? Math.round((totalCorrect / totalAttempts) * 100) : 0;
+
+        setOverview({
+          totalWords,
+          totalMastered,
+          averageAccuracy,
+          childCount: children.length,
+        });
+      });
+
+    return () => subscription.unsubscribe();
   }, [children]);
 
   const stats = [

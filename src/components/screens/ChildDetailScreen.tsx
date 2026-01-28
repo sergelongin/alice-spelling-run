@@ -1,28 +1,134 @@
 import { useState, useMemo, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
-import { ArrowLeft, Download, Edit2, Trash2 } from 'lucide-react';
+import { Clock, Flower2, TreePalm, ChevronRight } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
-import { useParentDashboardAccess } from '@/hooks';
-import { PinModal } from '@/components/wordbank';
-import { Button } from '@/components/common';
-import { ProfileAvatar, EditProfileModal, DeleteConfirmDialog } from '@/components/profiles';
-import { ChildSwitcher } from '@/components/parent/ChildSwitcher';
 import {
-  QuickStatsDashboard,
-  ActivityHeatmap,
-  StrugglingWordsPanel,
-  ErrorPatternAnalysis,
-  RecommendationsPanel,
-  getStrugglingWords,
-} from '@/components/wordbank';
-import {
-  getChildWordBank,
-  getChildStatistics,
+  useParentDashboardAccess,
+  useChildData,
   countActiveWords,
   countMasteredWords,
   calculateStreak,
-} from '@/utils/childDataReader';
+} from '@/hooks';
+import { PinModal } from '@/components/wordbank';
+import { Button } from '@/components/common';
+import { EditProfileModal, DeleteConfirmDialog, ResetProgressDialog } from '@/components/profiles';
+import { ChildHeaderCard } from '@/components/parent';
+import {
+  QuickStatsDashboard,
+  ActivityHeatmap,
+  ErrorPatternAnalysis,
+  RecommendationsPanel,
+} from '@/components/wordbank';
+import { AccuracyTrendChart, GameSessionDialog } from '@/components/statistics';
 import { categorizeWordsByState } from '@/utils/wordSelection';
+import { GameResult } from '@/types';
+import { getTrophyEmoji } from '@/utils';
+
+// Format date to a friendly string
+function formatSessionDate(dateString: string): string {
+  const date = new Date(dateString);
+  const today = new Date();
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) {
+    return `Today at ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  if (date.toDateString() === yesterday.toDateString()) {
+    return `Yesterday at ${date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`;
+  }
+  return date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+}
+
+// Format duration in seconds to a human-readable string
+function formatDuration(ms: number): string {
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) {
+    return `${seconds}s`;
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  return remainingSeconds > 0 ? `${minutes}m ${remainingSeconds}s` : `${minutes}m`;
+}
+
+interface RecentSessionsListProps {
+  sessions: GameResult[];
+  onSessionClick: (session: GameResult) => void;
+}
+
+/**
+ * Recent Sessions List - Shows last 5 game sessions with click-to-view details
+ */
+function RecentSessionsList({ sessions, onSessionClick }: RecentSessionsListProps) {
+  // Get the 5 most recent sessions (already sorted newest first in gameHistory)
+  const recentSessions = sessions.slice(0, 5);
+
+  return (
+    <div className="bg-white rounded-xl p-5 shadow-lg">
+      <h2 className="text-xl font-bold text-gray-800 mb-4 flex items-center gap-2">
+        <Clock className="text-blue-500" size={24} />
+        Recent Sessions
+      </h2>
+
+      <div className="space-y-2">
+        {recentSessions.map((session) => {
+          const isMeadow = session.mode === 'meadow';
+          const firstTryCount = session.completedWords.filter(w => w.attempts === 1).length;
+          const totalWords = session.completedWords.length;
+
+          return (
+            <button
+              key={session.id}
+              onClick={() => onSessionClick(session)}
+              className="w-full flex items-center gap-4 p-3 rounded-lg hover:bg-gray-50
+                       transition-colors text-left group"
+            >
+              {/* Mode icon */}
+              <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                isMeadow ? 'bg-green-100' : session.won ? 'bg-amber-100' : 'bg-red-100'
+              }`}>
+                {isMeadow ? (
+                  <Flower2 className="w-5 h-5 text-green-500" />
+                ) : session.won && session.trophy ? (
+                  <span className="text-lg">{getTrophyEmoji(session.trophy)}</span>
+                ) : (
+                  <TreePalm className={`w-5 h-5 ${session.won ? 'text-amber-500' : 'text-red-500'}`} />
+                )}
+              </div>
+
+              {/* Session info */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2">
+                  <span className="font-medium text-gray-800 capitalize">
+                    {session.mode === 'meadow' ? 'Chill Mode' :
+                     session.mode === 'savannah' ? 'Chase Mode' : 'Wildlands'}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    {formatSessionDate(session.date)}
+                  </span>
+                </div>
+                <div className="text-sm text-gray-600">
+                  {firstTryCount}/{totalWords} first try
+                  <span className="mx-2">·</span>
+                  {formatDuration(session.totalTime)}
+                </div>
+              </div>
+
+              {/* Chevron */}
+              <ChevronRight className="w-5 h-5 text-gray-400 group-hover:text-gray-600 transition-colors" />
+            </button>
+          );
+        })}
+      </div>
+
+      {sessions.length === 0 && (
+        <p className="text-center text-gray-500 py-4">
+          No practice sessions yet. Start practicing to see history here!
+        </p>
+      )}
+    </div>
+  );
+}
 
 /**
  * Child Detail Screen - Detailed view of a single child's progress
@@ -49,9 +155,11 @@ export function ChildDetailScreen() {
     closePinModal,
   } = useParentDashboardAccess();
 
-  const [expandedPanel, setExpandedPanel] = useState<'struggling' | 'patterns' | null>('patterns');
+  const [expandedPanel, setExpandedPanel] = useState<'patterns' | null>('patterns');
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [showResetDialog, setShowResetDialog] = useState(false);
+  const [selectedSession, setSelectedSession] = useState<GameResult | null>(null);
 
   // Find the current child
   const currentChild = useMemo(
@@ -59,16 +167,8 @@ export function ChildDetailScreen() {
     [children, childId]
   );
 
-  // Load child data
-  const wordBank = useMemo(
-    () => childId ? getChildWordBank(childId) : { words: [], lastUpdated: '', lastNewWordDate: null, newWordsIntroducedToday: 0 },
-    [childId]
-  );
-
-  const statistics = useMemo(
-    () => childId ? getChildStatistics(childId) : null,
-    [childId]
-  );
+  // Load child data from WatermelonDB
+  const { wordBank, statistics } = useChildData(childId || '');
 
   // Calculated stats
   const activeWords = useMemo(() =>
@@ -79,11 +179,6 @@ export function ChildDetailScreen() {
   const wordStates = useMemo(() =>
     categorizeWordsByState(activeWords),
     [activeWords]
-  );
-
-  const strugglingWords = useMemo(() =>
-    getStrugglingWords(wordBank.words),
-    [wordBank.words]
   );
 
   const streak = useMemo(() =>
@@ -129,8 +224,11 @@ export function ChildDetailScreen() {
   const handleExport = () => {
     const headers = ['Word', 'Status', 'Level', 'Accuracy', 'Attempts', 'Correct', 'Last Practiced'];
     const rows = wordBank.words.map(word => {
-      const accuracy = word.timesUsed > 0
-        ? Math.round((word.timesCorrect / word.timesUsed) * 100)
+      const attempts = word.attemptHistory || [];
+      const totalAttempts = attempts.length;
+      const correctAttempts = attempts.filter(a => a.wasCorrect).length;
+      const accuracy = totalAttempts > 0
+        ? Math.round((correctAttempts / totalAttempts) * 100)
         : 0;
       const status = word.isActive === false ? 'Archived' :
         word.introducedAt === null ? 'Waiting' :
@@ -142,8 +240,8 @@ export function ChildDetailScreen() {
         status,
         word.masteryLevel,
         `${accuracy}%`,
-        word.timesUsed,
-        word.timesCorrect,
+        totalAttempts,
+        correctAttempts,
         word.lastAttemptAt ? new Date(word.lastAttemptAt).toLocaleDateString() : 'Never',
       ];
     });
@@ -193,71 +291,15 @@ export function ChildDetailScreen() {
 
   return (
     <div className="flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full">
-      {/* Header */}
-      <div className="flex items-center gap-3 mb-4">
-        <Button
-          onClick={() => navigate('/parent-dashboard')}
-          variant="secondary"
-          size="sm"
-          className="flex items-center gap-2"
-        >
-          <ArrowLeft size={20} />
-          Dashboard
-        </Button>
-      </div>
-
-      {/* Child switcher */}
-      <ChildSwitcher
-        children={children}
-        activeChildId={childId || ''}
-        onSelectChild={(id) => navigate(`/parent-dashboard/child/${id}`)}
+      {/* Child navigation card */}
+      <ChildHeaderCard
+        child={currentChild}
+        allChildren={children}
+        onEdit={() => setShowEditModal(true)}
+        onResetProgress={() => setShowResetDialog(true)}
+        onExport={handleExport}
+        onDelete={() => setShowDeleteDialog(true)}
       />
-
-      {/* Child header */}
-      <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100 mb-6">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-4">
-            <ProfileAvatar
-              name={currentChild.name}
-              gradeLevel={currentChild.grade_level}
-              size="lg"
-            />
-            <div>
-              <h1 className="text-2xl font-bold text-gray-800">{currentChild.name}</h1>
-              <p className="text-gray-500">Grade {currentChild.grade_level}</p>
-            </div>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              onClick={() => setShowEditModal(true)}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <Edit2 size={16} />
-              Edit
-            </Button>
-            <Button
-              onClick={() => setShowDeleteDialog(true)}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-2 text-red-600 hover:text-red-700"
-            >
-              <Trash2 size={16} />
-              Delete
-            </Button>
-            <Button
-              onClick={handleExport}
-              variant="secondary"
-              size="sm"
-              className="flex items-center gap-2"
-            >
-              <Download size={16} />
-              Export CSV
-            </Button>
-          </div>
-        </div>
-      </div>
 
       {/* Main analytics content */}
       <div className="space-y-6">
@@ -271,16 +313,18 @@ export function ChildDetailScreen() {
         {/* Activity Heatmap */}
         <ActivityHeatmap words={wordBank.words} />
 
-        {/* Struggling Words Panel */}
-        <div id="panel-struggling">
-          <StrugglingWordsPanel
-            words={strugglingWords}
-            isExpanded={expandedPanel === 'struggling'}
-            onToggleExpand={() => setExpandedPanel(expandedPanel === 'struggling' ? null : 'struggling')}
-            onForcePractice={() => {}} // No-op since we're viewing another child's data
-            onArchive={() => {}} // No-op since we're viewing another child's data
+        {/* Accuracy Trend Chart */}
+        {statistics && (
+          <AccuracyTrendChart gameHistory={statistics.gameHistory} />
+        )}
+
+        {/* Recent Sessions */}
+        {statistics && statistics.gameHistory.length > 0 && (
+          <RecentSessionsList
+            sessions={statistics.gameHistory}
+            onSessionClick={setSelectedSession}
           />
-        </div>
+        )}
 
         {/* Error Pattern Analysis */}
         {statistics && (
@@ -303,6 +347,13 @@ export function ChildDetailScreen() {
         )}
       </div>
 
+      {/* Game Session Dialog */}
+      <GameSessionDialog
+        game={selectedSession}
+        isOpen={selectedSession !== null}
+        onClose={() => setSelectedSession(null)}
+      />
+
       {/* Edit Profile Modal */}
       {showEditModal && currentChild && (
         <EditProfileModal
@@ -320,6 +371,19 @@ export function ChildDetailScreen() {
           onDeleted={() => {
             setShowDeleteDialog(false);
             navigate('/parent-dashboard');
+          }}
+        />
+      )}
+
+      {/* Reset Progress Dialog */}
+      {showResetDialog && currentChild && (
+        <ResetProgressDialog
+          child={currentChild}
+          onClose={() => setShowResetDialog(false)}
+          onReset={() => {
+            setShowResetDialog(false);
+            // Force page refresh to show updated (empty) stats
+            window.location.reload();
           }}
         />
       )}

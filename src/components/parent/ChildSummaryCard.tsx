@@ -4,14 +4,14 @@ import { ProfileAvatar } from '@/components/profiles';
 import type { ChildProfile } from '@/types/auth';
 import type { ChildStatus } from '@/types/parent';
 import {
-  getChildWordBank,
+  useChildData,
   calculateAccuracy,
   countActiveWords,
   countMasteredWords,
   calculateStreak,
   getLastActivityDate,
   getDaysSinceActivity,
-} from '@/utils/childDataReader';
+} from '@/hooks';
 
 interface ChildSummaryCardProps {
   child: ChildProfile;
@@ -24,7 +24,7 @@ interface ChildSummaryCardProps {
  * Summary card for a single child showing key metrics and status
  */
 export function ChildSummaryCard({ child, onClick, onEdit, onDelete }: ChildSummaryCardProps) {
-  const wordBank = useMemo(() => getChildWordBank(child.id), [child.id]);
+  const { wordBank } = useChildData(child.id);
 
   const summary = useMemo(() => {
     const totalWords = countActiveWords(wordBank);
@@ -93,11 +93,36 @@ export function ChildSummaryCard({ child, onClick, onEdit, onDelete }: ChildSumm
 
   const showActions = onEdit || onDelete;
 
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      onClick?.();
+    }
+  };
+
+  // Determine if we need attention badge
+  const needsAttentionBadge = summary.status === 'needs-attention';
+  const hasWarningBadge = summary.daysSinceActivity !== null &&
+    summary.daysSinceActivity >= 3 &&
+    summary.daysSinceActivity < 5 &&
+    summary.status !== 'needs-attention';
+
   return (
-    <button
+    <div
+      role="button"
+      tabIndex={0}
       onClick={onClick}
-      className={`group relative w-full bg-white rounded-xl p-4 shadow-sm border-2 ${config.borderColor} hover:shadow-md transition-all text-left`}
+      onKeyDown={handleKeyDown}
+      className={`group relative w-full bg-white rounded-xl p-4 shadow-sm border-2 ${config.borderColor} hover:shadow-md transition-all text-left cursor-pointer`}
     >
+      {/* Attention badge - red for needs attention, amber for warning */}
+      {needsAttentionBadge && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 bg-red-500 rounded-full border-2 border-white z-20" />
+      )}
+      {hasWarningBadge && (
+        <span className="absolute -top-1 -right-1 w-3 h-3 bg-amber-500 rounded-full border-2 border-white z-20" />
+      )}
+
       {/* Hover overlay with edit/delete actions */}
       {showActions && (
         <div className="absolute inset-0 bg-black/60 rounded-xl opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-3 z-10">
@@ -163,6 +188,6 @@ export function ChildSummaryCard({ child, onClick, onEdit, onDelete }: ChildSumm
       <div className={`inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium ${config.bgColor} ${config.textColor}`}>
         {config.label}
       </div>
-    </button>
+    </div>
   );
 }
