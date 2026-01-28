@@ -10,9 +10,12 @@ For commands and high-level architecture, see [CLAUDE.md](../CLAUDE.md) in the r
 
 | File | Description |
 |------|-------------|
+| [AUDIO-SYSTEM.md](./AUDIO-SYSTEM.md) | Audio generation (Cartesia TTS), storage, caching, and admin management |
+| [AUTH-SYSTEM.md](./AUTH-SYSTEM.md) | Authentication, OAuth, user management, and child profiles |
 | [CODING-PATTERNS.md](./CODING-PATTERNS.md) | React patterns, error handling strategies, and caching best practices |
 | [GAME-MODES.md](./GAME-MODES.md) | Detailed specifications for Meadow, Savannah, and Wildlands game modes |
 | [LEARNING-SYSTEM.md](./LEARNING-SYSTEM.md) | Spaced repetition algorithm, word lifecycle, and mastery intervals |
+| [SYNC-ARCHITECTURE.md](./SYNC-ARCHITECTURE.md) | WatermelonDB offline-first sync with Supabase |
 
 ## Historical Reference
 

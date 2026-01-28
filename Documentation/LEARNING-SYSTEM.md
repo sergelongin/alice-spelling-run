@@ -55,8 +55,15 @@ Based on the Leitner spaced repetition system:
 
 ### Mastery Changes
 
-- **Correct answer**: Level increases by 1 (max 5)
-- **Incorrect answer**: Level decreases by 1 (min 0)
+- **First-try correct** (no wrong attempts in session):
+  - Streak increases by 1
+  - Level advances IF streak meets requirement (2 consecutive for levels 4-5)
+- **Same-session retry** (wrong then correct in same session):
+  - Treated as if no attempt occurred (no streak/level change)
+  - Records attempt history for tracking
+- **Incorrect answer** (time runs out or word skipped):
+  - Streak resets to 0
+  - Level decreases by 2 (min 0)
 - **Mastered word fails spot-check**: Drops to level 3 (Review)
 
 ---
@@ -103,6 +110,22 @@ The selection algorithm prioritizes:
 - **Maximum per session**: 2 words
 - **Condition**: Only if struggling count (level 0-1) < 15
 - **Tracking**: `lastNewWordDate` limits daily introduction
+
+#### Word Addition Methods
+
+Different word addition methods have different introduction behaviors:
+
+| Method | `introducedAt` | Behavior |
+|--------|----------------|----------|
+| Single word input | `now` | Immediately active for practice |
+| Import by Grade | `null` | Waits in queue for gradual introduction |
+| Word Catalog selection | `null` | Waits in queue for gradual introduction |
+| Spelling List Import | `now` | Immediately active (parent explicitly wants practice) |
+| Default/Starter words | `now` | Immediately active |
+
+**Rationale:**
+- **Gradual introduction** (`introducedAt = null`): Used when bulk-adding curriculum words. The spaced repetition system controls when words enter rotation, preventing overwhelm.
+- **Immediate introduction** (`introducedAt = now`): Used when parent explicitly adds specific words for practice. These are high-priority words the child needs to learn now (e.g., this week's spelling list).
 
 ### 2. Struggling Cap
 
@@ -195,3 +218,40 @@ Words display their state with color coding:
 | Learning | Orange | Needs practice |
 | Review | Blue | Making progress |
 | Mastered | Green | Well learned |
+
+---
+
+## Parent Word Bank Management
+
+Parents can manage their child's word bank at `/parent-dashboard/child/:childId/word-bank`.
+
+### Features
+
+| Feature | Component | Description |
+|---------|-----------|-------------|
+| **Single Word Add** | Text input | Add one word at a time (immediate introduction) |
+| **Import by Grade** | Modal | Import all words from Grade 3/4/5/6 (gradual introduction) |
+| **Word Catalog** | `WordCatalogModal` | Browse ~665 words with search/filters, select multiple (gradual introduction) |
+| **Spelling List Import** | `SpellingListImport` | Paste comma/newline list from school (immediate introduction) |
+| **Word Management Table** | `WordManagementTable` | View all words, archive/unarchive, force introduce |
+
+### Word Catalog
+
+The catalog modal (`src/components/wordbank/WordCatalogModal.tsx`) allows:
+- **Search**: Filter by word text or definition
+- **Grade filter**: All / Grade 3 / 4 / 5 / 6
+- **Status filter**: All / Available / Already Added
+- **Multi-select**: Check multiple words to add at once
+- **Pagination**: 50 words per page
+
+Words added from catalog use **gradual introduction** - they wait in queue until the learning system introduces them.
+
+### Spelling List Import
+
+The import component (`src/components/wordbank/SpellingListImport.tsx`) allows:
+- Paste comma-separated or newline-separated words
+- Auto-parsing with duplicate detection
+- Preview of words to be added
+- Validation (letters only, 2+ chars)
+
+Custom words use **immediate introduction** - they're active for practice immediately since the parent explicitly wants them practiced (e.g., this week's spelling test words).

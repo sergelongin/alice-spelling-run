@@ -88,7 +88,11 @@ See [Documentation/CODING-PATTERNS.md](./Documentation/CODING-PATTERNS.md) for d
 Use `@/` to import from `src/`, configured in both `tsconfig.json` and `vite.config.ts`.
 
 ### Screens
-Six screens via React Router: Home, WordBank, Game, Victory, GameOver, Statistics.
+Main screens via React Router:
+- **Player screens**: Home, WordBank, Game, Victory, GameOver, Statistics, LevelMap, PracticeComplete
+- **Auth screens**: Login, Signup, ProfileSelection, ChildSetup
+- **Parent screens**: ParentDashboard, ChildDetail, ChildWordBank (word management)
+- **Admin screens**: AdminAudio (super_admin only)
 
 ### Trophy System
 5 tiers based on remaining lives: Platinum (5), Gold (4), Silver (3), Bronze (2), Participant (1).
@@ -116,6 +120,54 @@ Key `.env` configuration:
 - `VITE_OPENAI_API_KEY` / `VITE_ANTHROPIC_API_KEY` / `VITE_GROQ_API_KEY`: API keys
 - `VITE_CARTESIA_API_KEY`: Premium TTS
 - `VITE_CARTESIA_VOICE_ID`: Voice selection
+
+### WatermelonDB Sync
+
+The app uses WatermelonDB for offline-first local storage with Supabase sync.
+
+**Key Files:**
+- `src/db/schema.ts` - WatermelonDB schema definition
+- `src/db/models.ts` - Model classes
+- `src/db/sync.ts` - Sync adapter with custom reconciliation
+- `src/db/transforms.ts` - Data transformers between WatermelonDB and Supabase
+
+**Sync Protocol Rules:**
+- `pullChanges()` must return raw records **without** `_status` or `_changed` fields
+- WatermelonDB manages these internal fields automatically during sync
+- Never add `_status: 'synced'` or `_changed: ''` to transform functions
+- `synchronize()` does NOT need `migrationsEnabledAtVersion` unless using WatermelonDB migrations
+
+**CRITICAL - Multi-User Database:**
+- WatermelonDB `synchronize()` operates on the **ENTIRE database**, not per-user
+- `pushChanges()` receives ALL pending records from ALL children in the local DB
+- **You MUST filter pushChanges by child_id** before sending to server
+- Without filtering, syncing Child B would push Child A's records under Child B's ID
+- See `filterChangesByChildId()` in `sync.ts` for the implementation
+
+**Custom Reconciliation:**
+The sync uses business-key reconciliation instead of ID matching because client and server generate different UUIDs:
+- `word_progress`: reconciled by `(child_id, word_text)`
+- `game_sessions`: reconciled by `(child_id, client_session_id)`
+- `statistics`: reconciled by `(child_id, mode)`
+- `calibration`: reconciled by `(child_id, client_calibration_id)`
+
+**Conflict Resolution:**
+- Counters (times_used, times_correct): MAX strategy (never lose progress)
+- Mastery state: Last-Write-Wins (LWW) based on `client_updated_at`
+- Game sessions: Insert-only with deduplication
+
+**Common Sync Errors:**
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Migration syncs cannot be enabled on a database that does not support migrations` | `migrationsEnabledAtVersion` set but no migrations configured | Remove `migrationsEnabledAtVersion` from `synchronize()` |
+| `Invalid raw record... must NOT have _status or _changed fields` | Transform functions adding WatermelonDB internal fields | Remove `_status` and `_changed` from `transform*FromServer()` functions |
+| `operator does not exist: json \|\| json` | Using `\|\|` concatenation on `json` type | Cast to `jsonb` before concatenation (see PostgreSQL JSON vs JSONB) |
+| Cross-child data pollution (Child A's data appears in Child B) | `pushChanges()` sends ALL records, server writes with single child_id | Filter changes by `child_id` before pushing (see `filterChangesByChildId()`) |
+
+**Supabase RPC Functions:**
+- `pull_changes(p_child_id, p_last_pulled_at)` - Returns all data updated since timestamp
+- `push_changes(p_child_id, p_changes)` - Processes client changes with conflict resolution
+- Defined in `supabase/migrations/009_watermelon_sync.sql` (fixed in `012_fix_push_changes_jsonb.sql`)
 
 ### Supabase (Database & Auth)
 
@@ -177,6 +229,19 @@ supabase projects list
 - INSERT policies are often forgotten but required for signup triggers
 - Service role policies allow internal operations: `TO service_role WITH CHECK (true)`
 
+**PostgreSQL JSON vs JSONB:**
+- `json` type: Text storage, no operators for manipulation
+- `jsonb` type: Binary storage, supports `||` concatenation, `-` removal, `@>` containment
+- **CRITICAL**: The `||` operator only works with `jsonb`, not `json`
+- RPC functions using `JSON` parameter type must cast to `jsonb` for operations:
+  ```sql
+  -- Wrong: json || json (error: operator does not exist)
+  COALESCE(p_changes->'foo', '[]'::json) || COALESCE(p_changes->'bar', '[]'::json)
+
+  -- Correct: cast to jsonb first
+  COALESCE((p_changes->'foo')::jsonb, '[]'::jsonb) || COALESCE((p_changes->'bar')::jsonb, '[]'::jsonb)
+  ```
+
 **Database Password:**
 - Stored in `.env` as `VITE_SUPABASE_DBPASSWPRD`
 - Use `$VITE_SUPABASE_DBPASSWPRD` in shell commands (load with `source .env`)
@@ -201,6 +266,27 @@ supabase projects list
 - **Spaced Repetition**: Leitner-based system with mastery levels 0-5 (`src/utils/wordSelection.ts`)
 - **Gradual Introduction**: Max 2 new words/session, 10/day, pauses if 15+ struggling
 - **Calibration**: Adaptive grade assessment in `src/hooks/useCalibration.ts`
+
+### Parent Word Bank Management
+
+Parents can manage their child's word bank at `/parent-dashboard/child/:childId/word-bank`.
+
+**Word Addition Methods:**
+| Method | Introduction Behavior | Use Case |
+|--------|----------------------|----------|
+| Single word input | Immediate (`introducedAt = now`) | Quick additions |
+| Import by Grade | Gradual (`introducedAt = null`) | Bulk curriculum setup |
+| Browse Word Catalog | Gradual (`introducedAt = null`) | Browse/select from ~665 words |
+| Spelling List Import | Immediate (`introducedAt = now`) | Paste school curriculum list |
+
+**Key Components:**
+- `WordCatalogModal` - Browse all grade-level words with search, filters, multi-select
+- `SpellingListImport` - Paste comma/newline-separated words for batch import
+- `ParentWordBank` - Full analytics dashboard with word management table
+
+**Context Functions:**
+- `addWordsFromCatalog(words)` - Gradual introduction (waits in queue)
+- `importCustomWords(texts)` - Immediate introduction (starts practicing now)
 
 ### Documentation
 See `/Documentation/` for detailed specs:
