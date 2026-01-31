@@ -150,6 +150,7 @@ The sync uses business-key reconciliation instead of ID matching because client 
 - `game_sessions`: reconciled by `(child_id, client_session_id)`
 - `statistics`: reconciled by `(child_id, mode)`
 - `calibration`: reconciled by `(child_id, client_calibration_id)`
+- `word_attempts`: reconciled by `(child_id, client_attempt_id)`
 
 **Conflict Resolution:**
 - Counters (times_used, times_correct): MAX strategy (never lose progress)
@@ -163,6 +164,10 @@ The sync uses business-key reconciliation instead of ID matching because client 
 | `Invalid raw record... must NOT have _status or _changed fields` | Transform functions adding WatermelonDB internal fields | Remove `_status` and `_changed` from `transform*FromServer()` functions |
 | `operator does not exist: json \|\| json` | Using `\|\|` concatenation on `json` type | Cast to `jsonb` before concatenation (see PostgreSQL JSON vs JSONB) |
 | Cross-child data pollution (Child A's data appears in Child B) | `pushChanges()` sends ALL records, server writes with single child_id | Filter changes by `child_id` before pushing (see `filterChangesByChildId()`) |
+| Word detail shows "No attempts" despite practice | `attempt_history_json` JSONB field was never synced | Use `word_attempts` table instead; `migrateLocalAttemptHistory()` salvages local data |
+
+**JSONB Fields Don't Auto-Sync:**
+JSONB fields (like `attempt_history_json`) require explicit handling in transforms.ts and RPC functions. If a JSONB field is missing from transforms, it silently fails to sync with no errors. **Prefer normalized tables for append-only data** (attempts, sessions, events) - they sync automatically via standard table handling.
 
 **Supabase RPC Functions:**
 - `pull_changes(p_child_id, p_last_pulled_at)` - Returns all data updated since timestamp
