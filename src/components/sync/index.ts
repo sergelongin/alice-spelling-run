@@ -1,1 +1,1 @@
-export { SyncStatusIndicator } from './SyncStatusIndicator';
+export { SyncStatusIndicator, SimpleSyncStatusIndicator } from './SyncStatusIndicator';

@@ -3,12 +3,19 @@
  * Provides reactive access to WatermelonDB data
  */
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '../index';
 import { syncWithSupabase } from '../sync';
 import { migrateChildData, isMigrationComplete, hasLocalStorageData } from '../migration/localStorage-to-watermelon';
-import type { WordProgress, GameSession, Statistics, Calibration, LearningProgress as LearningProgressModel, WordBankMetadata } from '../models';
+import {
+  checkSyncHealth as checkSyncHealthFn,
+  healSyncInconsistencies as healSyncFn,
+  type SyncHealthReport,
+  type SyncHealthStatus,
+  type HealOptions,
+} from '../syncDiagnostics';
+import type { WordProgress, GameSession, Statistics, Calibration, LearningProgress as LearningProgressModel, WordBankMetadata, WordAttemptModel } from '../models';
 import type {
   Word,
   WordBank,
@@ -67,11 +74,18 @@ export interface UseDatabaseResult {
   syncNow: () => Promise<void>;
   isSyncing: boolean;
 
+  // Sync Health (new diagnostic features)
+  syncHealth: SyncHealthReport | null;
+  syncHealthStatus: SyncHealthStatus;
+  checkSyncHealth: () => Promise<void>;
+  healSync: (options?: HealOptions) => Promise<void>;
+
   // Fresh data fetch (bypasses subscription timing)
   fetchFreshData: () => Promise<{
     wordBank: WordBank;
     statistics: GameStatistics;
     learningProgress: LearningProgress;
+    hasCompletedCalibration: boolean;
   }>;
 }
 
@@ -79,7 +93,37 @@ export interface UseDatabaseResult {
 // HELPER: Convert WatermelonDB models to app types
 // =============================================================================
 
-function wordProgressToWord(wp: WordProgress): Word {
+/**
+ * Build a map of word_text -> WordAttempt[] from attempt records
+ */
+function buildAttemptsMap(attempts: WordAttemptModel[]): Map<string, WordAttempt[]> {
+  const map = new Map<string, WordAttempt[]>();
+  for (const attempt of attempts) {
+    const key = attempt.wordText.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key)!.push({
+      id: attempt.clientAttemptId,
+      timestamp: attempt.attemptedAt,
+      wasCorrect: attempt.wasCorrect,
+      typedText: attempt.typedText,
+      mode: attempt.mode,
+      timeMs: attempt.timeMs,
+      attemptNumber: attempt.attemptNumber,
+    });
+  }
+  // Sort each word's attempts by timestamp descending (most recent first)
+  for (const [, wordAttempts] of map) {
+    wordAttempts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+  return map;
+}
+
+function wordProgressToWord(wp: WordProgress, attemptsMap?: Map<string, WordAttempt[]>): Word {
+  // Get attempts from the new normalized table if available, otherwise fall back to JSONB field
+  const attempts = attemptsMap?.get(wp.wordText.toLowerCase()) || wp.attemptHistory || [];
+
   return {
     id: wp.id,
     text: wp.wordText,
@@ -94,7 +138,7 @@ function wordProgressToWord(wp: WordProgress): Word {
     lastMasteredCheckAt: null,
     definition: wp.definition,
     exampleSentence: wp.exampleSentence,
-    attemptHistory: wp.attemptHistory || [],
+    attemptHistory: attempts,
     isActive: wp.isActive,
     archivedAt: wp.archivedAt,
   };
@@ -244,8 +288,100 @@ function createEmptyStatistics(): GameStatistics {
 }
 
 // =============================================================================
-// STANDALONE DEDUPLICATION (called during initialization)
+// STANDALONE MIGRATIONS (called during initialization)
 // =============================================================================
+
+const ATTEMPT_HISTORY_MIGRATION_KEY = 'attemptHistoryMigrationComplete';
+
+/**
+ * One-time migration: Copy local attempt_history_json data to the new word_attempts table.
+ * This salvages historical attempt data that was stored in the JSONB field but never synced.
+ * Safe to run multiple times - checks for existing records before creating.
+ */
+async function migrateLocalAttemptHistory(childId: string): Promise<number> {
+  // Check if already migrated for this child
+  const migrationFlag = `${ATTEMPT_HISTORY_MIGRATION_KEY}_${childId}`;
+  if (localStorage.getItem(migrationFlag) === 'true') {
+    return 0;
+  }
+
+  const wordProgressCollection = database.get<WordProgress>('word_progress');
+  const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
+
+  // Fetch all word progress records for this child
+  const wordProgressRecords = await wordProgressCollection
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  // Filter to only records that have attempt history data
+  const wordsWithHistory = wordProgressRecords.filter(
+    wp => wp.attemptHistory && wp.attemptHistory.length > 0
+  );
+
+  if (wordsWithHistory.length === 0) {
+    console.log('[useDatabase] No local attempt history to migrate');
+    localStorage.setItem(migrationFlag, 'true');
+    return 0;
+  }
+
+  console.log(`[useDatabase] Found ${wordsWithHistory.length} words with local attempt history to migrate`);
+
+  let migratedCount = 0;
+
+  await database.write(async () => {
+    for (const wp of wordsWithHistory) {
+      const attempts = wp.attemptHistory || [];
+
+      for (const attempt of attempts) {
+        // Generate a unique client_attempt_id based on available data
+        // Use existing id if present, otherwise create from word+timestamp
+        const clientAttemptId = attempt.id || `migrated-${wp.wordText}-${attempt.timestamp}`;
+
+        // Check if this attempt already exists (idempotent migration)
+        const existing = await wordAttemptCollection
+          .query(
+            Q.where('child_id', childId),
+            Q.where('client_attempt_id', clientAttemptId)
+          )
+          .fetchCount();
+
+        if (existing === 0) {
+          await wordAttemptCollection.create(record => {
+            record._raw.id = crypto.randomUUID();
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.child_id = childId;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.word_text = wp.wordText.toLowerCase();
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.client_attempt_id = clientAttemptId;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.attempt_number = attempt.attemptNumber || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.typed_text = attempt.typedText;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.was_correct = attempt.wasCorrect;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.mode = attempt.mode;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.time_ms = attempt.timeMs || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.attempted_at = new Date(attempt.timestamp).getTime();
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.session_id = null; // Original JSONB didn't track session_id
+          });
+          migratedCount++;
+        }
+      }
+    }
+  });
+
+  console.log(`[useDatabase] Migrated ${migratedCount} local attempt history records to word_attempts table`);
+
+  // Mark migration as complete
+  localStorage.setItem(migrationFlag, 'true');
+
+  return migratedCount;
+}
 
 /**
  * Deduplicate word_progress records for a child by word_text.
@@ -304,6 +440,10 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Sync health state
+  const [syncHealth, setSyncHealth] = useState<SyncHealthReport | null>(null);
+  const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
   // Raw data from WatermelonDB
   const [wordProgressRecords, setWordProgressRecords] = useState<WordProgress[]>([]);
   const [statisticsRecords, setStatisticsRecords] = useState<Statistics[]>([]);
@@ -311,6 +451,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const [calibrationRecords, setCalibrationRecords] = useState<Calibration[]>([]);
   const [learningProgressRecord, setLearningProgressRecord] = useState<LearningProgressModel | null>(null);
   const [wordBankMetadataRecord, setWordBankMetadataRecord] = useState<WordBankMetadata | null>(null);
+  const [wordAttemptRecords, setWordAttemptRecords] = useState<WordAttemptModel[]>([]);
 
   // ==========================================================================
   // INITIALIZATION & MIGRATION
@@ -332,6 +473,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
           await migrateChildData(childId);
           setIsMigrating(false);
         }
+
+        // Migrate local attempt_history_json to word_attempts table (one-time)
+        // This salvages historical attempt data that was stored in JSONB but never synced
+        console.log('[useDatabase] Checking for local attempt history to migrate...');
+        await migrateLocalAttemptHistory(childId);
 
         // Always run deduplication on init to clean up any existing duplicates
         // This handles duplicates from:
@@ -362,6 +508,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
       const calibrationCollection = database.get<Calibration>('calibration');
       const learningProgressCollection = database.get<LearningProgressModel>('learning_progress');
       const wordBankMetadataCollection = database.get<WordBankMetadata>('word_bank_metadata');
+      const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
       // Word Progress
       const wpSubscription = wordProgressCollection
@@ -411,6 +558,14 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
           if (!isCancelled) setWordBankMetadataRecord(records[0] || null);
         });
 
+      // Word Attempts (sorted by attempted_at descending for recent first)
+      const waSubscription = wordAttemptCollection
+        .query(Q.where('child_id', childId), Q.sortBy('attempted_at', Q.desc))
+        .observe()
+        .subscribe(records => {
+          if (!isCancelled) setWordAttemptRecords(records);
+        });
+
       // Return cleanup function
       return () => {
         wpSubscription.unsubscribe();
@@ -419,6 +574,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         calSubscription.unsubscribe();
         lpSubscription.unsubscribe();
         wbmSubscription.unsubscribe();
+        waSubscription.unsubscribe();
       };
     }
 
@@ -437,12 +593,15 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   // DERIVED STATE
   // ==========================================================================
 
+  // Build attempts map from word_attempts table
+  const attemptsMap = useMemo(() => buildAttemptsMap(wordAttemptRecords), [wordAttemptRecords]);
+
   const wordBank: WordBank = useMemo(() => ({
-    words: wordProgressRecords.map(wordProgressToWord),
+    words: wordProgressRecords.map(wp => wordProgressToWord(wp, attemptsMap)),
     lastUpdated: wordBankMetadataRecord?.lastUpdated || new Date().toISOString(),
     lastNewWordDate: wordBankMetadataRecord?.lastNewWordDate || null,
     newWordsIntroducedToday: wordBankMetadataRecord?.newWordsIntroducedToday || 0,
-  }), [wordProgressRecords, wordBankMetadataRecord]);
+  }), [wordProgressRecords, wordBankMetadataRecord, attemptsMap]);
 
   const statistics: GameStatistics = useMemo(
     () => statisticsToGameStatistics(statisticsRecords, gameSessionRecords),
@@ -555,10 +714,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
       for (const record of wordProgressRecords) {
         if (textsToIntroduce.has(record.wordText.toLowerCase()) && !record.introducedAtRaw) {
           await record.update(r => {
-            // @ts-expect-error - WatermelonDB _raw setters not typed
-            r._raw.introduced_at = now;
-            // @ts-expect-error - WatermelonDB _raw setters not typed
-            r._raw.next_review_at = now;
+            // Use decorated field setters for proper sync tracking
+
+            r.introducedAtRaw = now;
+
+            r.nextReviewAtRaw = now;
           });
         }
       }
@@ -572,10 +732,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.introduced_at = now;
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.next_review_at = now;
+        // Use decorated field setters for proper sync tracking
+
+        r.introducedAtRaw = now;
+
+        r.nextReviewAtRaw = now;
       });
     });
   }, []);
@@ -587,10 +748,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.is_active = false;
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.archived_at = now;
+        // Use decorated field setters for proper sync tracking
+
+        r.isActive = false;
+
+        r.archivedAtRaw = now;
       });
     });
   }, []);
@@ -601,10 +763,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.is_active = true;
-        // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.archived_at = null;
+        // Use decorated field setters for proper sync tracking
+
+        r.isActive = true;
+
+        r.archivedAtRaw = null;
       });
     });
   }, []);
@@ -623,32 +786,42 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     typedText: string,
     wasCorrect: boolean,
     mode: GameModeId,
-    timeMs?: number
+    timeMs?: number,
+    sessionId?: string,
+    attemptNumber?: number
   ): Promise<void> => {
     const normalized = wordText.toLowerCase();
-    const record = wordProgressRecords.find(r => r.wordText.toLowerCase() === normalized);
-    if (!record) return;
+    const now = Date.now();
+    const clientAttemptId = crypto.randomUUID();
 
-    const now = new Date().toISOString();
-    const newAttempt: WordAttempt = {
-      id: crypto.randomUUID(),
-      timestamp: now,
-      wasCorrect,
-      typedText,
-      mode,
-      timeMs,
-    };
-
-    const history = record.attemptHistory || [];
-    const updatedHistory = [newAttempt, ...history].slice(0, 100);
+    const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
     await database.write(async () => {
-      await record.update(r => {
+      await wordAttemptCollection.create(record => {
+        record._raw.id = crypto.randomUUID();
         // @ts-expect-error - WatermelonDB _raw setters not typed
-        r._raw.attempt_history_json = JSON.stringify(updatedHistory);
+        record._raw.child_id = childId;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.word_text = normalized;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.client_attempt_id = clientAttemptId;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.attempt_number = attemptNumber || null;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.typed_text = typedText;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.was_correct = wasCorrect;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.mode = mode;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.time_ms = timeMs || null;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.attempted_at = now;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        record._raw.session_id = sessionId || null;
       });
     });
-  }, [wordProgressRecords]);
+  }, [childId]);
 
   // ==========================================================================
   // GAME RECORDING
@@ -695,26 +868,31 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
 
       if (existingStats) {
         await existingStats.update(s => {
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.total_games_played = existingStats.totalGamesPlayed + 1;
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.total_wins = existingStats.totalWins + (result.won ? 1 : 0);
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.total_words_attempted = existingStats.totalWordsAttempted + result.wordsAttempted;
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.total_words_correct = existingStats.totalWordsCorrect + result.wordsCorrect;
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.streak_current = result.won ? existingStats.streakCurrent + 1 : 0;
-          // @ts-expect-error - WatermelonDB _raw setters not typed
-          s._raw.streak_best = Math.max(
+          // IMPORTANT: Use decorated field setters (not _raw) to enable WatermelonDB change tracking!
+          // The @field decorator creates setters that call _setRaw internally, which properly
+          // marks the record as "updated" and tracks changed fields for sync.
+          // Direct _raw modifications bypass this tracking and break sync.
+
+
+          s.totalGamesPlayed = existingStats.totalGamesPlayed + 1;
+
+          s.totalWins = existingStats.totalWins + (result.won ? 1 : 0);
+
+          s.totalWordsAttempted = existingStats.totalWordsAttempted + result.wordsAttempted;
+
+          s.totalWordsCorrect = existingStats.totalWordsCorrect + result.wordsCorrect;
+
+          s.streakCurrent = result.won ? existingStats.streakCurrent + 1 : 0;
+
+          s.streakBest = Math.max(
             existingStats.streakBest,
             result.won ? existingStats.streakCurrent + 1 : 0
           );
           if (result.trophy) {
             const trophyCounts = { ...existingStats.trophyCounts };
             trophyCounts[result.trophy] = (trophyCounts[result.trophy] || 0) + 1;
-            // @ts-expect-error - WatermelonDB _raw setters not typed
-            s._raw.trophy_counts_json = JSON.stringify(trophyCounts);
+
+            s.trophyCounts = trophyCounts;
           }
         });
       } else {
@@ -934,6 +1112,83 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   }, [isOnline, isLoading]);
 
   // ==========================================================================
+  // SYNC HEALTH MONITORING
+  // ==========================================================================
+
+  const checkSyncHealth = useCallback(async (): Promise<void> => {
+    if (!isOnline) {
+      setSyncHealth({
+        status: 'offline',
+        hasUnsyncedChanges: false,
+        inconsistencyCount: 0,
+        details: 'Offline - cannot check sync health',
+        checkedAt: new Date().toISOString(),
+      });
+      return;
+    }
+
+    try {
+      const report = await checkSyncHealthFn(childId);
+      setSyncHealth(report);
+    } catch (err) {
+      console.error('[useDatabase] Failed to check sync health:', err);
+      setSyncHealth({
+        status: 'error',
+        hasUnsyncedChanges: false,
+        inconsistencyCount: -1,
+        details: `Error: ${err instanceof Error ? err.message : String(err)}`,
+        checkedAt: new Date().toISOString(),
+      });
+    }
+  }, [childId, isOnline]);
+
+  const healSync = useCallback(async (options?: HealOptions): Promise<void> => {
+    if (!isOnline || isSyncing) return;
+
+    setIsSyncing(true);
+    try {
+      const report = await healSyncFn(childId, options);
+      setSyncHealth(report);
+    } catch (err) {
+      console.error('[useDatabase] Failed to heal sync:', err);
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [childId, isOnline, isSyncing]);
+
+  // Periodic sync health check (every 5 minutes when online)
+  useEffect(() => {
+    // Clear any existing interval
+    if (healthCheckIntervalRef.current) {
+      clearInterval(healthCheckIntervalRef.current);
+      healthCheckIntervalRef.current = null;
+    }
+
+    // Only set up periodic checks when online and not loading
+    if (!isOnline || isLoading) return;
+
+    // Initial check after sync completes
+    const initialTimeout = setTimeout(() => {
+      checkSyncHealth();
+    }, 5000); // Wait 5 seconds after mount for initial sync to complete
+
+    // Set up periodic checks every 5 minutes
+    healthCheckIntervalRef.current = setInterval(() => {
+      checkSyncHealth();
+    }, 5 * 60 * 1000);
+
+    return () => {
+      clearTimeout(initialTimeout);
+      if (healthCheckIntervalRef.current) {
+        clearInterval(healthCheckIntervalRef.current);
+      }
+    };
+  }, [isOnline, isLoading, checkSyncHealth]);
+
+  // Derived sync health status for quick access
+  const syncHealthStatus: SyncHealthStatus = syncHealth?.status ?? (isOnline ? 'checking' : 'offline');
+
+  // ==========================================================================
   // FRESH DATA FETCH (bypasses subscription timing issues)
   // ==========================================================================
 
@@ -943,18 +1198,24 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     const gsCollection = database.get<GameSession>('game_sessions');
     const lpCollection = database.get<LearningProgressModel>('learning_progress');
     const wbmCollection = database.get<WordBankMetadata>('word_bank_metadata');
+    const calibrationCollection = database.get<Calibration>('calibration');
+    const waCollection = database.get<WordAttemptModel>('word_attempts');
 
-    const [freshWP, freshStats, freshGS, freshLP, freshMeta] = await Promise.all([
+    const [freshWP, freshStats, freshGS, freshLP, freshMeta, freshCalibration, freshAttempts] = await Promise.all([
       wpCollection.query(Q.where('child_id', childId)).fetch(),
       statsCollection.query(Q.where('child_id', childId)).fetch(),
       gsCollection.query(Q.where('child_id', childId), Q.sortBy('played_at', Q.desc)).fetch(),
       lpCollection.query(Q.where('child_id', childId)).fetch(),
       wbmCollection.query(Q.where('child_id', childId)).fetch(),
+      calibrationCollection.query(Q.where('child_id', childId)).fetch(),
+      waCollection.query(Q.where('child_id', childId), Q.sortBy('attempted_at', Q.desc)).fetch(),
     ]);
+
+    const freshAttemptsMap = buildAttemptsMap(freshAttempts);
 
     return {
       wordBank: {
-        words: freshWP.map(wordProgressToWord),
+        words: freshWP.map(wp => wordProgressToWord(wp, freshAttemptsMap)),
         lastUpdated: freshMeta[0]?.lastUpdated || new Date().toISOString(),
         lastNewWordDate: freshMeta[0]?.lastNewWordDate || null,
         newWordsIntroducedToday: freshMeta[0]?.newWordsIntroducedToday || 0,
@@ -965,6 +1226,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         pointsHistory: freshLP[0]?.pointHistory || [],
         lastUpdated: new Date().toISOString(),
       },
+      hasCompletedCalibration: freshCalibration.length > 0,
     };
   }, [childId]);
 
@@ -992,6 +1254,10 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     resetCalibration,
     syncNow,
     isSyncing,
+    syncHealth,
+    syncHealthStatus,
+    checkSyncHealth,
+    healSync,
     fetchFreshData,
   };
 }
