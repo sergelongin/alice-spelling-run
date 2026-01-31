@@ -20,6 +20,7 @@ export function useFreshGameData() {
     wordBank: WordBank;
     statistics: GameStatistics;
     learningProgress: LearningProgress;
+    hasCompletedCalibration: boolean;
   } | null>(null);
 
   useEffect(() => {
@@ -50,6 +51,7 @@ export function useFreshGameData() {
     wordBank: freshData?.wordBank || ctx.wordBank,
     statistics: freshData?.statistics || ctx.statistics,
     learningProgress: freshData?.learningProgress || ctx.learningProgress,
+    hasCompletedCalibration: freshData?.hasCompletedCalibration ?? ctx.hasCompletedCalibration,
     isLoading: ctx.isLoading || !hasFetched,
   };
 }

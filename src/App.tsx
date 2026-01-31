@@ -21,6 +21,7 @@ import {
   ProfileSelectionScreen,
   ParentDashboardScreen,
   ChildDetailScreen,
+  ChildSessionHistoryScreen,
   ChildWordBankScreen,
   LevelMapScreen,
 } from './components/screens';
@@ -93,6 +94,7 @@ function App() {
             >
               <Route index element={<ParentDashboardScreen />} />
               <Route path="child/:childId" element={<ChildDetailScreen />} />
+              <Route path="child/:childId/sessions" element={<ChildSessionHistoryScreen />} />
               <Route path="child/:childId/word-bank" element={<ChildWordBankScreen />} />
             </Route>
 

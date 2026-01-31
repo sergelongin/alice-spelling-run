@@ -117,7 +117,7 @@ export function ChildWordBankScreen() {
 
       {/* Word Bank Content */}
       <GameProvider key={childId} childId={childId}>
-        <ParentWordBank hideHeader />
+        <ParentWordBank hideHeader childName={currentChild.name} />
       </GameProvider>
 
       {/* Edit Profile Modal */}

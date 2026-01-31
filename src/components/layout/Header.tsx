@@ -3,7 +3,8 @@ import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { Home, BookOpen, BarChart3, Volume2, LogOut, User, ChevronDown, Users, Settings, LayoutDashboard } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 import { ProfileAvatar } from '@/components/profiles';
-import { SyncStatusIndicator } from '@/components/sync';
+import { SyncStatusIndicator, SimpleSyncStatusIndicator } from '@/components/sync';
+import { useGameContextOptional } from '@/context/GameContextDB';
 
 export function Header() {
   const location = useLocation();
@@ -11,6 +12,9 @@ export function Header() {
   const { user, profile, signOut, isSuperAdmin, isParentOrSuperAdmin, hasChildren, activeChild, clearProfileSelection } = useAuth();
   const [showUserMenu, setShowUserMenu] = useState(false);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  // Get sync context (optional - may be null if no active child)
+  const gameContext = useGameContextOptional();
 
   // Close menu when clicking outside
   // NOTE: This useEffect MUST run before any early return to satisfy React's Rules of Hooks
@@ -141,7 +145,17 @@ export function Header() {
             )}
 
             {/* Sync status indicator */}
-            <SyncStatusIndicator />
+            {gameContext ? (
+              <SyncStatusIndicator
+                syncHealth={gameContext.syncHealth}
+                syncHealthStatus={gameContext.syncHealthStatus}
+                isSyncing={gameContext.isSyncing}
+                onCheckHealth={gameContext.checkSyncHealth}
+                onHealSync={gameContext.healSync}
+              />
+            ) : (
+              <SimpleSyncStatusIndicator />
+            )}
 
             {/* Divider */}
             <div className="w-px h-6 bg-gray-200 mx-1" />

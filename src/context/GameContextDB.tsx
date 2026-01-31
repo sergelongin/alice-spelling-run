@@ -24,6 +24,7 @@ import type {
   StoredCalibration,
   LearningProgress,
 } from '@/types';
+import type { SyncHealthReport, SyncHealthStatus, HealOptions } from '@/db/hooks';
 
 interface GameContextValue {
   // Loading state
@@ -64,8 +65,14 @@ interface GameContextValue {
   // Sync
   syncNow: () => Promise<void>;
 
+  // Sync Health (diagnostics)
+  syncHealth: SyncHealthReport | null;
+  syncHealthStatus: SyncHealthStatus;
+  checkSyncHealth: () => Promise<void>;
+  healSync: (options?: HealOptions) => Promise<void>;
+
   // Fresh data fetch (bypasses subscription timing)
-  fetchFreshData: () => Promise<{ wordBank: WordBank; statistics: GameStatistics; learningProgress: LearningProgress }>;
+  fetchFreshData: () => Promise<{ wordBank: WordBank; statistics: GameStatistics; learningProgress: LearningProgress; hasCompletedCalibration: boolean }>;
 }
 
 const GameContext = createContext<GameContextValue | null>(null);
@@ -254,6 +261,10 @@ export function GameProvider({ children, childId }: GameProviderProps) {
       setCalibrationComplete: db.setCalibrationComplete,
       resetCalibration: db.resetCalibration,
       syncNow: db.syncNow,
+      syncHealth: db.syncHealth,
+      syncHealthStatus: db.syncHealthStatus,
+      checkSyncHealth: db.checkSyncHealth,
+      healSync: db.healSync,
       fetchFreshData: db.fetchFreshData,
     }),
     [
@@ -283,6 +294,10 @@ export function GameProvider({ children, childId }: GameProviderProps) {
       db.setCalibrationComplete,
       db.resetCalibration,
       db.syncNow,
+      db.syncHealth,
+      db.syncHealthStatus,
+      db.checkSyncHealth,
+      db.healSync,
       db.fetchFreshData,
     ]
   );
@@ -296,4 +311,13 @@ export function useGameContext(): GameContextValue {
     throw new Error('useGameContext must be used within a GameProvider');
   }
   return context;
+}
+
+/**
+ * Optional version of useGameContext that returns null instead of throwing
+ * when used outside of GameProvider. Useful for components like Header
+ * that render in both contexts (with and without an active child).
+ */
+export function useGameContextOptional(): GameContextValue | null {
+  return useContext(GameContext);
 }

@@ -58,6 +58,9 @@ export function GameScreen() {
   // Refs for real-time attempt recording
   const previousRecordedWrongAttempts = useRef(0);
   const previousCompletedCount = useRef(0);
+  // Track if the current game has been recorded to prevent duplicate recordings
+  // (React StrictMode can cause double-mount, each getGameResult() generates new UUID)
+  const hasRecordedGameRef = useRef(false);
 
   // Word context for progressive disclosure pronunciation
   const {
@@ -152,6 +155,8 @@ export function GameScreen() {
     }
     startGame(words, modeConfig);
     gameInitializedRef.current = true;
+    // Reset recording guard for new game
+    hasRecordedGameRef.current = false;
   }, [modeId, gameState.status]);
 
   // Reset the initialized ref when game ends or component unmounts
@@ -324,6 +329,12 @@ export function GameScreen() {
   // Handle game end
   useEffect(() => {
     if (gameState.status === 'won' || gameState.status === 'lost') {
+      // Prevent duplicate recording (StrictMode double-mount or re-renders)
+      if (hasRecordedGameRef.current) {
+        return;
+      }
+      hasRecordedGameRef.current = true;
+
       timer.pause();
       const result = getGameResult(modeId);
 

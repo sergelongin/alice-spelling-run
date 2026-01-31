@@ -12,6 +12,7 @@ import {
   calibrationCollection,
   learningProgressCollection,
   wordBankMetadataCollection,
+  wordAttemptCollection,
 } from './index';
 
 /**
@@ -28,6 +29,7 @@ export async function resetWatermelonDBForChild(childId: string): Promise<{
   calibration: number;
   learning_progress: number;
   word_bank_metadata: number;
+  word_attempts: number;
 }> {
   console.log('[resetWatermelonDB] Starting reset for child:', childId);
 
@@ -38,6 +40,7 @@ export async function resetWatermelonDBForChild(childId: string): Promise<{
     calibration: 0,
     learning_progress: 0,
     word_bank_metadata: 0,
+    word_attempts: 0,
   };
 
   await database.write(async () => {
@@ -100,18 +103,30 @@ export async function resetWatermelonDBForChild(childId: string): Promise<{
     for (const record of wordBankMetadataRecords) {
       await record.destroyPermanently();
     }
+
+    // Delete word attempts
+    const wordAttemptRecords = await wordAttemptCollection
+      .query(Q.where('child_id', childId))
+      .fetch();
+    counts.word_attempts = wordAttemptRecords.length;
+    console.log('[resetWatermelonDB] Found', wordAttemptRecords.length, 'word_attempts records to delete');
+    for (const record of wordAttemptRecords) {
+      await record.destroyPermanently();
+    }
   });
 
   // Verify deletion was successful
   const verifyWp = await wordProgressCollection.query(Q.where('child_id', childId)).fetchCount();
   const verifyGs = await gameSessionCollection.query(Q.where('child_id', childId)).fetchCount();
   const verifySt = await statisticsCollection.query(Q.where('child_id', childId)).fetchCount();
+  const verifyWa = await wordAttemptCollection.query(Q.where('child_id', childId)).fetchCount();
 
-  if (verifyWp > 0 || verifyGs > 0 || verifySt > 0) {
+  if (verifyWp > 0 || verifyGs > 0 || verifySt > 0 || verifyWa > 0) {
     console.error('[resetWatermelonDB] VERIFICATION FAILED! Records still exist:', {
       word_progress: verifyWp,
       game_sessions: verifyGs,
       statistics: verifySt,
+      word_attempts: verifyWa,
     });
   } else {
     console.log('[resetWatermelonDB] Verified: All records deleted successfully');

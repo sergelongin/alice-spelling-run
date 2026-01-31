@@ -2,13 +2,13 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Home, Flame, BarChart3, TrendingUp, Star, Zap } from 'lucide-react';
 import { Button } from '../common';
 import { GameResult, GameModeId, getStatsModeId } from '@/types';
-import { useGameContext } from '@/context/GameContextDB';
+import { useFreshGameData } from '@/hooks/useFreshGameData';
 import { findSessionWins, type SessionWin } from '@/utils/sessionSummary';
 
 export function GameOverScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { statistics } = useGameContext();
+  const { statistics } = useFreshGameData();
   const result = location.state?.result as GameResult | undefined;
   const mode = (result?.mode || 'savannah') as GameModeId;
   const statsModeId = getStatsModeId(mode);

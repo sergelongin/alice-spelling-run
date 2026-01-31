@@ -1,6 +1,6 @@
 import { useState, useRef, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { ChevronDown, Edit2, RotateCcw, Download, Trash2, Users, Check, BarChart3, BookOpen } from 'lucide-react';
+import { ChevronDown, Edit2, RotateCcw, Download, Trash2, Users, Check, BarChart3, Clock, BookOpen } from 'lucide-react';
 import { ProfileAvatar } from '@/components/profiles';
 import type { ChildProfile } from '@/types/auth';
 
@@ -39,7 +39,8 @@ export function ChildHeaderCard({
 
   // Determine which tab is active
   const isWordBankActive = location.pathname.includes('/word-bank');
-  const isProgressActive = !isWordBankActive;
+  const isSessionsActive = location.pathname.includes('/sessions');
+  const isProgressActive = !isWordBankActive && !isSessionsActive;
 
   // Close dropdowns when clicking outside
   useEffect(() => {
@@ -65,6 +66,8 @@ export function ChildHeaderCard({
     // Navigate to the same section for the new child
     if (isWordBankActive) {
       navigate(`/parent-dashboard/child/${childId}/word-bank`);
+    } else if (isSessionsActive) {
+      navigate(`/parent-dashboard/child/${childId}/sessions`);
     } else {
       navigate(`/parent-dashboard/child/${childId}`);
     }
@@ -162,6 +165,17 @@ export function ChildHeaderCard({
             >
               <BarChart3 size={18} />
               <span className="text-sm font-medium hidden sm:inline">Progress</span>
+            </button>
+            <button
+              onClick={() => navigate(`/parent-dashboard/child/${child.id}/sessions`)}
+              className={`flex items-center gap-1.5 px-2 sm:px-3 py-2 rounded-lg transition-colors ${
+                isSessionsActive
+                  ? 'bg-purple-100 text-purple-700'
+                  : 'text-gray-600 hover:bg-gray-100'
+              }`}
+            >
+              <Clock size={18} />
+              <span className="text-sm font-medium hidden sm:inline">Sessions</span>
             </button>
             <button
               onClick={() => navigate(`/parent-dashboard/child/${child.id}/word-bank`)}

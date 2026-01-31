@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ArrowLeft, Trophy } from 'lucide-react';
-import { useGameContext } from '@/context/GameContextDB';
+import { useFreshGameData } from '@/hooks/useFreshGameData';
 import { LEVEL_MAP_MILESTONES } from '@/data/levelMapMilestones';
 import { calculateLevelMapProgress, getProgressMessage } from '@/utils/levelMapUtils';
 import { LevelMapPath } from '@/components/levelMap/LevelMapPath';
@@ -13,7 +13,7 @@ import { LevelMapCharacter } from '@/components/levelMap/LevelMapCharacter';
  */
 export function LevelMapScreen() {
   const navigate = useNavigate();
-  const { learningProgress } = useGameContext();
+  const { learningProgress } = useFreshGameData();
 
   const progress = useMemo(
     () => calculateLevelMapProgress(learningProgress),

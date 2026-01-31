@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useGameContext } from '@/context/GameContextDB';
+import { useFreshGameData } from '@/hooks/useFreshGameData';
 import { GameModeId } from '@/types';
 import {
   HomeCharacterScene,
@@ -18,7 +18,7 @@ import { calculateLevelMapProgress } from '@/utils/levelMapUtils';
 
 export function HomeScreen() {
   const navigate = useNavigate();
-  const { wordBank, statistics, learningProgress, hasCompletedCalibration, isLoading } = useGameContext();
+  const { wordBank, statistics, learningProgress, hasCompletedCalibration, isLoading } = useFreshGameData();
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURNS
   // Derived data
