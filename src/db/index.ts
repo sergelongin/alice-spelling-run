@@ -13,6 +13,7 @@ import {
   Calibration,
   LearningProgress,
   WordBankMetadata,
+  WordAttemptModel,
 } from './models';
 
 // Extend Window interface for HMR persistence
@@ -54,6 +55,7 @@ function createDatabase(): Database {
       Calibration,
       LearningProgress,
       WordBankMetadata,
+      WordAttemptModel,
     ],
   });
 
@@ -75,6 +77,7 @@ export const statisticsCollection = database.get<Statistics>('statistics');
 export const calibrationCollection = database.get<Calibration>('calibration');
 export const learningProgressCollection = database.get<LearningProgress>('learning_progress');
 export const wordBankMetadataCollection = database.get<WordBankMetadata>('word_bank_metadata');
+export const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
 // Re-export models for convenience
 export * from './models';

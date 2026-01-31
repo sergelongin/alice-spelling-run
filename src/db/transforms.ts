@@ -88,11 +88,27 @@ export interface ServerCalibration {
   created_at: string;
 }
 
+export interface ServerWordAttempt {
+  id: string;
+  child_id: string;
+  word_text: string;
+  client_attempt_id: string;
+  attempt_number: number | null;
+  typed_text: string;
+  was_correct: boolean;
+  mode: string;
+  time_ms: number | null;
+  attempted_at: string;
+  session_id: string | null;
+  created_at: string;
+}
+
 export interface ServerPullResponse {
   word_progress: ServerWordProgress[];
   game_sessions: ServerGameSession[];
   statistics: ServerStatistics[];
   calibration: ServerCalibration[];
+  word_attempts: ServerWordAttempt[];
   timestamp: string;
   last_reset_at: string | null;
 }
@@ -114,6 +130,7 @@ export interface SyncChangeset {
   calibration: SyncTableChanges;
   learning_progress: SyncTableChanges;
   word_bank_metadata: SyncTableChanges;
+  word_attempts: SyncTableChanges;
 }
 
 // =============================================================================
@@ -205,6 +222,26 @@ export function transformCalibrationFromServer(row: ServerCalibration): RawRecor
 }
 
 /**
+ * Convert server word attempt to WatermelonDB raw record
+ */
+export function transformWordAttemptFromServer(row: ServerWordAttempt): RawRecord {
+  return {
+    id: row.id,
+    child_id: row.child_id,
+    word_text: row.word_text,
+    client_attempt_id: row.client_attempt_id,
+    attempt_number: row.attempt_number,
+    typed_text: row.typed_text,
+    was_correct: row.was_correct,
+    mode: row.mode,
+    time_ms: row.time_ms,
+    attempted_at: new Date(row.attempted_at).getTime(),
+    session_id: row.session_id,
+    server_id: row.id,
+  };
+}
+
+/**
  * Transform full server pull response to WatermelonDB sync changes
  */
 export function transformPullChanges(serverData: ServerPullResponse): SyncChangeset {
@@ -236,6 +273,11 @@ export function transformPullChanges(serverData: ServerPullResponse): SyncChange
     },
     word_bank_metadata: {
       created: [],
+      updated: [],
+      deleted: [],
+    },
+    word_attempts: {
+      created: (serverData.word_attempts || []).map(transformWordAttemptFromServer),
       updated: [],
       deleted: [],
     },
@@ -351,6 +393,24 @@ export function transformCalibrationToServer(record: RawRecord): Record<string, 
 }
 
 /**
+ * Convert WatermelonDB word attempt to server format
+ */
+export function transformWordAttemptToServer(record: RawRecord): Record<string, unknown> {
+  const r = record as Record<string, unknown>;
+  return {
+    word_text: r['word_text'],
+    client_attempt_id: r['client_attempt_id'],
+    attempt_number: r['attempt_number'],
+    typed_text: r['typed_text'],
+    was_correct: r['was_correct'],
+    mode: r['mode'],
+    time_ms: r['time_ms'],
+    attempted_at: new Date(r['attempted_at'] as number).toISOString(),
+    session_id: r['session_id'],
+  };
+}
+
+/**
  * Transform WatermelonDB push changes to server format
  */
 export function transformPushChanges(changes: SyncChangeset): Record<string, unknown> {
@@ -368,6 +428,9 @@ export function transformPushChanges(changes: SyncChangeset): Record<string, unk
     },
     calibration: {
       created: changes.calibration.created.map(transformCalibrationToServer),
+    },
+    word_attempts: {
+      created: changes.word_attempts.created.map(transformWordAttemptToServer),
     },
   };
 }

@@ -6,7 +6,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 1,
+  version: 2,
   tables: [
     // Word progress tracks per-word mastery state
     tableSchema({
@@ -122,6 +122,26 @@ export const schema = appSchema({
         { name: 'new_words_introduced_today', type: 'number' },
       ],
     }),
+
+    // Word attempts - normalized table for attempt history
+    // Insert-only sync (like game_sessions) for multi-device safety
+    tableSchema({
+      name: 'word_attempts',
+      columns: [
+        { name: 'child_id', type: 'string', isIndexed: true },
+        { name: 'word_text', type: 'string', isIndexed: true },
+        { name: 'client_attempt_id', type: 'string', isIndexed: true },
+        { name: 'attempt_number', type: 'number', isOptional: true },
+        { name: 'typed_text', type: 'string' },
+        { name: 'was_correct', type: 'boolean' },
+        { name: 'mode', type: 'string' },
+        { name: 'time_ms', type: 'number', isOptional: true },
+        { name: 'attempted_at', type: 'number' },
+        { name: 'session_id', type: 'string', isOptional: true },
+        // Server sync tracking
+        { name: 'server_id', type: 'string', isOptional: true },
+      ],
+    }),
   ],
 });
 
@@ -133,6 +153,7 @@ export const TableName = {
   CALIBRATION: 'calibration',
   LEARNING_PROGRESS: 'learning_progress',
   WORD_BANK_METADATA: 'word_bank_metadata',
+  WORD_ATTEMPTS: 'word_attempts',
 } as const;
 
 export type TableNameType = (typeof TableName)[keyof typeof TableName];

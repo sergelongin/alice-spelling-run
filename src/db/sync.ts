@@ -7,7 +7,8 @@
  * sync would create duplicate records for the same word.
  */
 
-import { synchronize } from '@nozbe/watermelondb/sync';
+import { synchronize, hasUnsyncedChanges } from '@nozbe/watermelondb/sync';
+import SyncLogger from '@nozbe/watermelondb/sync/SyncLogger';
 import { Q } from '@nozbe/watermelondb';
 import { database } from './index';
 import { supabase } from '@/lib/supabase';
@@ -16,11 +17,13 @@ import {
   transformGameSessionFromServer,
   transformStatisticsFromServer,
   transformCalibrationFromServer,
+  transformWordAttemptFromServer,
   transformPushChanges,
   type ServerPullResponse,
   type SyncChangeset,
   type SyncTableChanges,
 } from './transforms';
+import type { WordAttemptModel } from './models';
 import type { WordProgress, GameSession, Statistics, Calibration } from './models';
 import { resetWatermelonDBForChild } from './resetChild';
 
@@ -35,6 +38,9 @@ const SYNC_CONFIG = {
 
 // Track last sync time to prevent too-frequent syncs
 let lastSyncTime = 0;
+
+// Persistent SyncLogger to keep track of recent syncs
+const syncLogger = new SyncLogger(20);
 
 // Generic type for raw records
 type RawRecord = Record<string, unknown>;
@@ -82,6 +88,11 @@ function filterChangesByChildId(changes: SyncChangeset, childId: string): SyncCh
       updated: filterRecords(changes.word_bank_metadata.updated),
       deleted: changes.word_bank_metadata.deleted,
     },
+    word_attempts: {
+      created: filterRecords(changes.word_attempts.created),
+      updated: filterRecords(changes.word_attempts.updated),
+      deleted: changes.word_attempts.deleted,
+    },
   };
 }
 
@@ -119,6 +130,12 @@ async function reconcilePullChanges(
   // ==========================================================================
   const calibrationChanges = await reconcileCalibration(serverData, childId);
 
+  // ==========================================================================
+  // WORD ATTEMPTS: Reconcile by (child_id, client_attempt_id)
+  // Insert-only pattern (like game_sessions)
+  // ==========================================================================
+  const wordAttemptsChanges = await reconcileWordAttempts(serverData, childId);
+
   return {
     word_progress: wordProgressChanges,
     game_sessions: gameSessionChanges,
@@ -126,6 +143,7 @@ async function reconcilePullChanges(
     calibration: calibrationChanges,
     learning_progress: { created: [], updated: [], deleted: [] },
     word_bank_metadata: { created: [], updated: [], deleted: [] },
+    word_attempts: wordAttemptsChanges,
   };
 }
 
@@ -302,6 +320,54 @@ async function reconcileCalibration(
 }
 
 /**
+ * Reconcile word_attempts by client_attempt_id.
+ * Insert-only pattern (like game_sessions) - no updates, just deduplication.
+ */
+async function reconcileWordAttempts(
+  serverData: ServerPullResponse,
+  childId: string
+): Promise<SyncTableChanges> {
+  if (!serverData.word_attempts?.length) {
+    return { created: [], updated: [], deleted: [] };
+  }
+
+  // Query local records to build lookup map by client_attempt_id
+  const localRecords = await database
+    .get<WordAttemptModel>('word_attempts')
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  const localByAttemptId = new Map<string, WordAttemptModel>();
+  for (const record of localRecords) {
+    localByAttemptId.set(record.clientAttemptId, record);
+  }
+
+  const created: RawRecord[] = [];
+  const updated: RawRecord[] = [];
+
+  for (const serverRecord of serverData.word_attempts) {
+    const attemptId = serverRecord.client_attempt_id;
+    const localMatch = localByAttemptId.get(attemptId);
+
+    if (localMatch) {
+      // Local record exists - put in "updated" with LOCAL id
+      // (This handles ID reconciliation, data is unchanged for insert-only)
+      const transformed = transformWordAttemptFromServer(serverRecord);
+      updated.push({
+        ...transformed,
+        id: localMatch.id,
+      });
+    } else {
+      // No local match - put in "created"
+      created.push(transformWordAttemptFromServer(serverRecord));
+    }
+  }
+
+  console.log(`[Sync] word_attempts reconciled: ${created.length} created, ${updated.length} updated`);
+  return { created, updated, deleted: [] };
+}
+
+/**
  * Sync local WatermelonDB with Supabase
  * @param childId - The child ID to sync data for
  * @returns Promise that resolves when sync is complete
@@ -317,9 +383,17 @@ export async function syncWithSupabase(childId: string): Promise<void> {
 
   console.log('[Sync] Starting sync for child:', childId);
 
+  // Check for pending changes BEFORE sync
+  const hasPending = await hasUnsyncedChanges({ database });
+  console.log('[Sync] Has unsynced changes:', hasPending);
+
+  // Create a new log entry for this sync
+  const log = syncLogger.newLog();
+
   try {
     await synchronize({
       database,
+      log, // Pass logger to capture sync details
       pullChanges: async ({ lastPulledAt }) => {
         console.log('[Sync] Pulling changes since:', lastPulledAt);
 
@@ -344,6 +418,7 @@ export async function syncWithSupabase(childId: string): Promise<void> {
           gameSessions: serverData.game_sessions?.length || 0,
           statistics: serverData.statistics?.length || 0,
           calibration: serverData.calibration?.length || 0,
+          wordAttempts: serverData.word_attempts?.length || 0,
           lastResetAt: serverData.last_reset_at,
         });
 
@@ -368,6 +443,7 @@ export async function syncWithSupabase(childId: string): Promise<void> {
               calibration: { created: [], updated: [], deleted: [] },
               learning_progress: { created: [], updated: [], deleted: [] },
               word_bank_metadata: { created: [], updated: [], deleted: [] },
+              word_attempts: { created: [], updated: [], deleted: [] },
             };
             return { changes: emptyChangeset, timestamp: serverTimestamp };
           }
@@ -384,12 +460,50 @@ export async function syncWithSupabase(childId: string): Promise<void> {
       },
 
       pushChanges: async ({ changes }) => {
-        console.log('[Sync] Pushing changes');
-
         // CRITICAL: Filter to only push records belonging to this child.
         // WatermelonDB sync operates on the entire database, so without this filter,
         // syncing child B would push child A's pending records under child B's ID.
         const filteredChanges = filterChangesByChildId(changes as SyncChangeset, childId);
+
+        // Log detailed push payload counts for debugging
+        const pushCounts = {
+          word_progress: {
+            created: filteredChanges.word_progress.created.length,
+            updated: filteredChanges.word_progress.updated.length,
+            deleted: filteredChanges.word_progress.deleted.length,
+          },
+          game_sessions: {
+            created: filteredChanges.game_sessions.created.length,
+            updated: filteredChanges.game_sessions.updated.length,
+            deleted: filteredChanges.game_sessions.deleted.length,
+          },
+          statistics: {
+            created: filteredChanges.statistics.created.length,
+            updated: filteredChanges.statistics.updated.length,
+            deleted: filteredChanges.statistics.deleted.length,
+          },
+          calibration: {
+            created: filteredChanges.calibration.created.length,
+            updated: filteredChanges.calibration.updated.length,
+            deleted: filteredChanges.calibration.deleted.length,
+          },
+          word_attempts: {
+            created: filteredChanges.word_attempts.created.length,
+            updated: filteredChanges.word_attempts.updated.length,
+            deleted: filteredChanges.word_attempts.deleted.length,
+          },
+        };
+        console.log('[Sync] Pushing changes:', pushCounts);
+
+        // If all counts are 0, log a warning for investigation
+        const totalChanges = Object.values(pushCounts).reduce(
+          (sum, table) => sum + table.created + table.updated + table.deleted,
+          0
+        );
+        if (totalChanges === 0) {
+          console.log('[Sync] Warning: No changes to push (all counts are 0)');
+        }
+
         const transformedChanges = transformPushChanges(filteredChanges);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -407,33 +521,33 @@ export async function syncWithSupabase(childId: string): Promise<void> {
       },
     });
 
-    console.log('[Sync] Sync completed successfully');
+    // Log sync completion with details from SyncLogger
+    console.log('[Sync] Sync completed successfully:', {
+      startedAt: log.startedAt,
+      finishedAt: log.finishedAt,
+      phase: log.phase,
+      remoteChangeCount: log.remoteChangeCount,
+      localChangeCount: log.localChangeCount,
+      resolvedConflicts: log.resolvedConflicts?.length || 0,
+    });
   } catch (error) {
     console.error('[Sync] Sync failed:', error);
+    // Log error details from SyncLogger
+    console.error('[Sync] SyncLogger error details:', {
+      phase: log.phase,
+      error: log.error,
+    });
     throw error;
   }
 }
 
 /**
  * Check if sync is needed (has local changes)
+ * Uses the official WatermelonDB API to check for unsynced changes.
  * @returns Promise<boolean> - true if there are pending changes
  */
 export async function hasPendingChanges(): Promise<boolean> {
-  // WatermelonDB tracks pending changes internally
-  // We can check by looking for records with _status !== 'synced'
-  const wordProgress = database.get('word_progress');
-  const gameSessions = database.get('game_sessions');
-  const statistics = database.get('statistics');
-
-  const [wpCount, gsCount, statsCount] = await Promise.all([
-    wordProgress.query().fetchCount(),
-    gameSessions.query().fetchCount(),
-    statistics.query().fetchCount(),
-  ]);
-
-  // For now, just check if we have any data
-  // In practice, WatermelonDB tracks sync status internally
-  return wpCount > 0 || gsCount > 0 || statsCount > 0;
+  return hasUnsyncedChanges({ database });
 }
 
 /**
@@ -446,4 +560,5 @@ export async function resetSyncState(): Promise<void> {
   console.log('[Sync] Sync state reset - next sync will be a full sync');
 }
 
-export { SYNC_CONFIG };
+// Export for external access to sync diagnostics
+export { SYNC_CONFIG, syncLogger };

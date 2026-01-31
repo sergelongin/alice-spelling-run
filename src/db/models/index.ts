@@ -9,3 +9,4 @@ export { Statistics } from './Statistics';
 export { Calibration } from './Calibration';
 export { LearningProgress } from './LearningProgress';
 export { WordBankMetadata } from './WordBankMetadata';
+export { WordAttemptModel } from './WordAttempt';
