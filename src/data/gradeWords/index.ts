@@ -265,3 +265,186 @@ export async function hasSupabaseWords(): Promise<boolean> {
     return false;
   }
 }
+
+// =============================================================================
+// CUSTOM WORDS
+// Functions for parent-created custom words
+// =============================================================================
+
+/**
+ * Custom word data for insertion
+ */
+export interface CustomWordInput {
+  word: string;
+  definition: string;
+  example?: string;
+  gradeLevel: GradeLevel;
+}
+
+/**
+ * Custom word with metadata (returned from Supabase)
+ */
+export interface CustomWord extends WordDefinition {
+  id: string;
+  gradeLevel: GradeLevel;
+  createdAt: string;
+}
+
+/**
+ * Insert a custom word into the Supabase catalog
+ * The word will be marked as custom and owned by the current user
+ */
+export async function insertCustomWord(
+  input: CustomWordInput,
+  userId: string
+): Promise<{ word: CustomWord | null; error: string | null }> {
+  if (!isSupabaseConfigured()) {
+    return { word: null, error: 'Supabase not configured' };
+  }
+
+  const wordNormalized = input.word.toLowerCase().trim();
+
+  const { data, error } = await supabase
+    .from('words')
+    .insert({
+      word: input.word.trim(),
+      word_normalized: wordNormalized,
+      definition: input.definition.trim(),
+      example: input.example?.trim() || null,
+      grade_level: input.gradeLevel,
+      is_active: true,
+      is_custom: true,
+      created_by: userId,
+    })
+    .select()
+    .single();
+
+  if (error) {
+    // Handle duplicate word error
+    if (error.code === '23505') {
+      return { word: null, error: 'This word already exists in the catalog' };
+    }
+    return { word: null, error: error.message };
+  }
+
+  // Invalidate cache so the new word appears
+  invalidateWordCache();
+
+  return {
+    word: {
+      id: data.id,
+      word: data.word,
+      definition: data.definition,
+      example: data.example || undefined,
+      gradeLevel: data.grade_level as GradeLevel,
+      createdAt: data.created_at,
+    },
+    error: null,
+  };
+}
+
+/**
+ * Insert multiple custom words at once
+ * Returns count of successfully inserted words
+ */
+export async function insertCustomWords(
+  inputs: CustomWordInput[],
+  userId: string
+): Promise<{ count: number; errors: string[] }> {
+  const results = await Promise.all(
+    inputs.map(input => insertCustomWord(input, userId))
+  );
+
+  const errors: string[] = [];
+  let count = 0;
+
+  for (const result of results) {
+    if (result.error) {
+      errors.push(result.error);
+    } else {
+      count++;
+    }
+  }
+
+  return { count, errors };
+}
+
+/**
+ * Fetch custom words created by a specific user
+ */
+export async function fetchCustomWords(userId: string): Promise<CustomWord[]> {
+  if (!isSupabaseConfigured()) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from('words')
+    .select('*')
+    .eq('created_by', userId)
+    .eq('is_custom', true)
+    .eq('is_active', true)
+    .order('created_at', { ascending: false });
+
+  if (error || !data) {
+    console.error('[GradeWords] Error fetching custom words:', error?.message);
+    return [];
+  }
+
+  return data.map(row => ({
+    id: row.id,
+    word: row.word,
+    definition: row.definition,
+    example: row.example || undefined,
+    gradeLevel: row.grade_level as GradeLevel,
+    createdAt: row.created_at,
+  }));
+}
+
+/**
+ * Delete a custom word from the catalog
+ * Only the owner can delete their own custom words
+ */
+export async function deleteCustomWord(wordId: string): Promise<{ error: string | null }> {
+  if (!isSupabaseConfigured()) {
+    return { error: 'Supabase not configured' };
+  }
+
+  const { error } = await supabase
+    .from('words')
+    .delete()
+    .eq('id', wordId)
+    .eq('is_custom', true);
+
+  if (error) {
+    return { error: error.message };
+  }
+
+  // Invalidate cache
+  invalidateWordCache();
+
+  return { error: null };
+}
+
+/**
+ * Check if a word already exists in the catalog (system or custom)
+ */
+export async function wordExistsInCatalog(word: string): Promise<boolean> {
+  if (!isSupabaseConfigured()) {
+    // Check local words
+    const normalized = word.toLowerCase().trim();
+    for (const grade of [3, 4, 5, 6] as GradeLevel[]) {
+      if (GRADE_WORDS[grade].some(w => w.word.toLowerCase() === normalized)) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  const { count, error } = await supabase
+    .from('words')
+    .select('*', { count: 'exact', head: true })
+    .eq('word_normalized', word.toLowerCase().trim())
+    .eq('is_active', true);
+
+  return !error && (count || 0) > 0;
+}
