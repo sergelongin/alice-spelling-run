@@ -14,3 +14,4 @@ export { RecommendationsPanel } from './RecommendationsPanel';
 export { ActivityHeatmap } from './ActivityHeatmap';
 export { WordCatalogModal } from './WordCatalogModal';
 export { SpellingListImport } from './SpellingListImport';
+export { AddWordsModal } from './AddWordsModal';

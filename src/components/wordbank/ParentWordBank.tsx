@@ -1,71 +1,51 @@
-import React, { useState, useMemo } from 'react';
+import { useState, useMemo } from 'react';
 import {
   Plus,
-  Download,
   GraduationCap,
   Trash2,
-  AlertCircle,
   BookOpen,
 } from 'lucide-react';
 import { Button, Modal, WordDetailModal } from '../common';
-import { AttentionNeededAlert } from './AttentionNeededAlert';
-import { StrugglingWordsPanel, getStrugglingWords } from './StrugglingWordsPanel';
-import { getActivePatternCount } from './ErrorPatternAnalysis';
 import { WordManagementTable } from './WordManagementTable';
 import { WordCatalogModal } from './WordCatalogModal';
-import { SpellingListImport } from './SpellingListImport';
+import { AddWordsModal } from './AddWordsModal';
 import { useGameContext } from '@/context/GameContextDB';
 import { Word } from '@/types';
-import { validateWord } from '@/utils/wordSelection';
 import { GRADE_INFO, GradeLevel, WordDefinition } from '@/data/gradeWords';
 
 interface ParentWordBankProps {
   /** When true, hides the "Word Bank Analytics" header (used when inside ChildWordBankScreen) */
   hideHeader?: boolean;
+  /** Child's name for personalized messaging in modals */
+  childName?: string;
 }
 
 /**
  * Parent Mode view of the Word Bank.
  * Data-rich analytics, word management, and actionable insights.
  */
-export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
+export function ParentWordBank({ hideHeader = false, childName }: ParentWordBankProps) {
   const {
     wordBank,
-    statistics,
-    addWord,
     removeWord,
     archiveWord,
     unarchiveWord,
     forceIntroduceWord,
     importGradeWords,
-    importDefaultWords,
     clearWordBank,
     addWordsFromCatalog,
     importCustomWords,
   } = useGameContext();
 
   // UI state
-  const [newWord, setNewWord] = useState('');
-  const [wordError, setWordError] = useState('');
   const [selectedWord, setSelectedWord] = useState<Word | null>(null);
   const [showClearModal, setShowClearModal] = useState(false);
   const [showGradeModal, setShowGradeModal] = useState(false);
   const [showCatalogModal, setShowCatalogModal] = useState(false);
+  const [showAddWordsModal, setShowAddWordsModal] = useState(false);
   const [importResult, setImportResult] = useState<{ grade: number; count: number } | null>(null);
   const [catalogImportResult, setCatalogImportResult] = useState<number | null>(null);
   const [customImportResult, setCustomImportResult] = useState<number | null>(null);
-  const [expandedPanel, setExpandedPanel] = useState<'struggling' | null>('struggling');
-
-  // Calculated stats
-  const strugglingWords = useMemo(() =>
-    getStrugglingWords(wordBank.words),
-    [wordBank.words]
-  );
-
-  const errorPatternCount = useMemo(() =>
-    getActivePatternCount(statistics.errorPatterns),
-    [statistics.errorPatterns]
-  );
 
   // Set of existing word texts (lowercase) for duplicate checking
   const existingWordTexts = useMemo(() =>
@@ -74,25 +54,6 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
   );
 
   // Handlers
-  const handleAddWord = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setWordError('');
-
-    const validation = validateWord(newWord);
-    if (!validation.valid) {
-      setWordError(validation.error || 'Invalid word');
-      return;
-    }
-
-    const success = await addWord(newWord);
-    if (!success) {
-      setWordError('This word already exists in your word bank');
-      return;
-    }
-
-    setNewWord('');
-  };
-
   const handleImportGrade = async (grade: GradeLevel) => {
     const count = await importGradeWords(grade);
     setImportResult({ grade, count });
@@ -152,14 +113,6 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
     URL.revokeObjectURL(url);
   };
 
-  const scrollToPanel = () => {
-    setExpandedPanel('struggling');
-    // Allow time for expand animation, then scroll
-    setTimeout(() => {
-      document.getElementById('panel-struggling')?.scrollIntoView({ behavior: 'smooth' });
-    }, 100);
-  };
-
   return (
     <div className={hideHeader ? '' : 'flex-1 p-4 md:p-8 max-w-5xl mx-auto w-full'}>
       {/* Header - only show if not hidden */}
@@ -173,25 +126,7 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
 
       {/* Main content */}
       <div className="space-y-6">
-        {/* Attention Alert */}
-        <AttentionNeededAlert
-          strugglingWordCount={strugglingWords.length}
-          errorPatternCount={errorPatternCount}
-          onViewDetails={scrollToPanel}
-        />
-
-        {/* Struggling Words Panel */}
-        <div id="panel-struggling">
-          <StrugglingWordsPanel
-            words={strugglingWords}
-            isExpanded={expandedPanel === 'struggling'}
-            onToggleExpand={() => setExpandedPanel(expandedPanel === 'struggling' ? null : 'struggling')}
-            onForcePractice={forceIntroduceWord}
-            onArchive={archiveWord}
-          />
-        </div>
-
-        {/* Add Word Form + Import Actions */}
+        {/* Add Words Section */}
         <div className="bg-white rounded-xl p-5 shadow-sm border border-gray-100">
           <h3 className="font-semibold text-gray-800 mb-4">Add Words</h3>
 
@@ -203,44 +138,27 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
           )}
           {customImportResult !== null && (
             <div className="mb-4 p-3 bg-green-50 text-green-700 rounded-lg">
-              Imported {customImportResult} word{customImportResult === 1 ? '' : 's'}!
+              Added {customImportResult} word{customImportResult === 1 ? '' : 's'}!
             </div>
           )}
 
-          <form onSubmit={handleAddWord} className="flex gap-3 mb-4">
-            <div className="flex-1">
-              <input
-                type="text"
-                value={newWord}
-                onChange={e => {
-                  setNewWord(e.target.value);
-                  setWordError('');
-                }}
-                placeholder="Type a new word to add..."
-                className="w-full px-4 py-2.5 border border-gray-200 rounded-lg
-                         focus:border-blue-500 focus:ring-1 focus:ring-blue-200 outline-none"
-              />
-              {wordError && (
-                <p className="text-red-500 text-sm mt-1 flex items-center gap-1">
-                  <AlertCircle size={14} />
-                  {wordError}
-                </p>
-              )}
-            </div>
-            <Button type="submit" variant="primary" className="flex items-center gap-2">
-              <Plus size={18} />
-              Add
-            </Button>
-          </form>
-
+          {/* Button row */}
           <div className="flex flex-wrap gap-3">
+            <Button
+              onClick={() => setShowAddWordsModal(true)}
+              variant="primary"
+              className="flex items-center gap-2"
+            >
+              <Plus size={18} />
+              Add Words
+            </Button>
             <Button
               onClick={() => setShowCatalogModal(true)}
               variant="secondary"
               className="flex items-center gap-2"
             >
               <BookOpen size={18} />
-              Browse Word Catalog
+              Browse Catalog
             </Button>
             <Button
               onClick={() => setShowGradeModal(true)}
@@ -248,15 +166,7 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
               className="flex items-center gap-2"
             >
               <GraduationCap size={18} />
-              Import by Grade
-            </Button>
-            <Button
-              onClick={importDefaultWords}
-              variant="secondary"
-              className="flex items-center gap-2"
-            >
-              <Download size={18} />
-              Import Starter Words
+              Import Grade
             </Button>
             {wordBank.words.length > 0 && (
               <Button
@@ -269,12 +179,6 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
               </Button>
             )}
           </div>
-
-          {/* Spelling List Import */}
-          <SpellingListImport
-            existingWords={existingWordTexts}
-            onImport={handleImportCustomWords}
-          />
         </div>
 
         {/* Word Management Table */}
@@ -288,6 +192,15 @@ export function ParentWordBank({ hideHeader = false }: ParentWordBankProps) {
           onWordClick={setSelectedWord}
         />
       </div>
+
+      {/* Add Words Modal */}
+      <AddWordsModal
+        isOpen={showAddWordsModal}
+        onClose={() => setShowAddWordsModal(false)}
+        existingWords={existingWordTexts}
+        onImport={handleImportCustomWords}
+        childName={childName}
+      />
 
       {/* Clear confirmation modal */}
       <Modal

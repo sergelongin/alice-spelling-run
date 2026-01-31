@@ -22,4 +22,5 @@ export { ManageProfilesScreen } from './ManageProfilesScreen';
 // Parent screens
 export { ParentDashboardScreen } from './ParentDashboardScreen';
 export { ChildDetailScreen } from './ChildDetailScreen';
+export { ChildSessionHistoryScreen } from './ChildSessionHistoryScreen';
 export { ChildWordBankScreen } from './ChildWordBankScreen';

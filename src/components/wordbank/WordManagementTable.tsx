@@ -3,7 +3,6 @@ import {
   Search,
   ChevronUp,
   ChevronDown,
-  ChevronRight,
   Trash2,
   Archive,
   RotateCcw,
@@ -42,7 +41,6 @@ export function WordManagementTable({
   onExport,
   onWordClick,
 }: WordManagementTableProps) {
-  const [isCollapsed, setIsCollapsed] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [sortField, setSortField] = useState<SortField>('word');
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
@@ -174,27 +172,15 @@ export function WordManagementTable({
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-gray-100 overflow-hidden">
-      {/* Collapsible header */}
-      <button
-        onClick={() => setIsCollapsed(!isCollapsed)}
-        className="w-full px-5 py-4 flex items-center justify-between hover:bg-gray-50 transition-colors"
-      >
-        <div className="flex items-center gap-3">
-          {isCollapsed ? (
-            <ChevronRight className="w-5 h-5 text-gray-400" />
-          ) : (
-            <ChevronDown className="w-5 h-5 text-gray-400" />
-          )}
-          <Table className="w-5 h-5 text-gray-500" />
-          <span className="font-semibold text-gray-800">Word Management</span>
-          <span className="text-sm text-gray-500">({words.length} words)</span>
-        </div>
-      </button>
+      {/* Header */}
+      <div className="px-5 py-4 flex items-center gap-3 border-b border-gray-100">
+        <Table className="w-5 h-5 text-gray-500" />
+        <span className="font-semibold text-gray-800">Currently Learning</span>
+        <span className="text-sm text-gray-500">({words.length} words)</span>
+      </div>
 
-      {!isCollapsed && (
-        <>
-          {/* Search and filters */}
-          <div className="px-5 py-4 border-t border-gray-100">
+      {/* Search and filters */}
+      <div className="px-5 py-4 border-t border-gray-100">
             <div className="flex flex-col md:flex-row gap-3">
               {/* Search */}
               <div className="flex-1 relative">
@@ -391,8 +377,6 @@ export function WordManagementTable({
           <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 text-sm text-gray-500">
             Showing {filteredWords.length} of {words.length} words
           </div>
-        </>
-      )}
     </div>
   );
 }

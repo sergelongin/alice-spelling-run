@@ -17,7 +17,8 @@ interface WordProgressRowProps {
 }
 
 function WordProgressRow({ word, state, onClick }: WordProgressRowProps) {
-  const attempts = word.timesUsed;
+  // Use attemptHistory as the authoritative source (matches WordDetailModal)
+  const attempts = (word.attemptHistory || []).length;
 
   // Calculate progress to next state
   let progressPercent: number;
