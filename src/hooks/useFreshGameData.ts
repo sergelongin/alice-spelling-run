@@ -53,5 +53,7 @@ export function useFreshGameData() {
     learningProgress: freshData?.learningProgress || ctx.learningProgress,
     hasCompletedCalibration: freshData?.hasCompletedCalibration ?? ctx.hasCompletedCalibration,
     isLoading: ctx.isLoading || !hasFetched,
+    needsInitialSync: ctx.needsInitialSync,
+    initialSyncCompleted: ctx.initialSyncCompleted,
   };
 }

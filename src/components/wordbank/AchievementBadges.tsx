@@ -4,6 +4,7 @@ import { Achievement } from '@/types/achievements';
 interface AchievementBadgesProps {
   achievements: Achievement[];
   variant?: 'default' | 'compact';
+  className?: string;
 }
 
 interface BadgeModalProps {
@@ -63,7 +64,7 @@ function BadgeModal({ achievement, onClose }: BadgeModalProps) {
  * Earned badges glow, unearned are grayed out.
  * Shows highest tier of each achievement type.
  */
-export function AchievementBadges({ achievements, variant = 'default' }: AchievementBadgesProps) {
+export function AchievementBadges({ achievements, variant = 'default', className = '' }: AchievementBadgesProps) {
   const [selectedAchievement, setSelectedAchievement] = useState<Achievement | null>(null);
 
   // Group achievements by base type and show highest tier earned (or next tier to earn)
@@ -77,7 +78,7 @@ export function AchievementBadges({ achievements, variant = 'default' }: Achieve
 
   return (
     <>
-      <div className={`bg-white rounded-xl shadow-sm border border-gray-100 ${isCompact ? 'p-4' : 'p-6'}`}>
+      <div className={`bg-white rounded-xl shadow-sm border border-gray-100 flex flex-col ${isCompact ? 'p-4' : 'p-6'} ${className}`}>
         <h3 className={`font-bold text-gray-800 flex items-center gap-2 ${isCompact ? 'text-base mb-3' : 'text-lg mb-4'}`}>
           <span>🏆</span>
           My Achievements

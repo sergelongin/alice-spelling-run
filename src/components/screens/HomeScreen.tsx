@@ -9,6 +9,7 @@ import {
   HomeHeroMission,
 } from '@/components/home';
 import { LevelMapBackground } from '@/components/levelMap';
+import { InitialSyncLoader } from '@/components/sync/InitialSyncLoader';
 import {
   getWordsDueCount,
   countMasteredWords,
@@ -18,7 +19,15 @@ import { calculateLevelMapProgress } from '@/utils/levelMapUtils';
 
 export function HomeScreen() {
   const navigate = useNavigate();
-  const { wordBank, statistics, learningProgress, hasCompletedCalibration, isLoading } = useFreshGameData();
+  const {
+    wordBank,
+    statistics,
+    learningProgress,
+    hasCompletedCalibration,
+    isLoading,
+    needsInitialSync,
+    initialSyncCompleted,
+  } = useFreshGameData();
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY EARLY RETURNS
   // Derived data
@@ -47,6 +56,11 @@ export function HomeScreen() {
     calculateLevelMapProgress(learningProgress),
     [learningProgress]
   );
+
+  // Show initial sync loader for new devices before data arrives from server
+  if (needsInitialSync && !initialSyncCompleted) {
+    return <InitialSyncLoader />;
+  }
 
   // Show loading spinner while WatermelonDB subscriptions initialize
   if (isLoading) {

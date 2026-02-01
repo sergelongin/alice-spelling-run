@@ -1,4 +1,4 @@
-import { Play, Sparkles, Trophy, Check } from 'lucide-react';
+import { Leaf, Sparkles, Trophy, Check } from 'lucide-react';
 import { Button } from '../common';
 
 interface TodaysMissionCardProps {
@@ -6,19 +6,23 @@ interface TodaysMissionCardProps {
   canIntroduceNew: boolean;
   masteredCount: number;
   totalActiveWords: number;
-  onPractice: () => void;
+  onChillPractice: () => void;
+  onChaseMode: () => void;
+  className?: string;
 }
 
 /**
  * Large, colorful card showing today's practice mission with dynamic messaging.
- * Primary call-to-action for child mode.
+ * Shows two CTA buttons: Chill Practice and Run and Win Trophies.
  */
 export function TodaysMissionCard({
   dueWordCount,
   canIntroduceNew,
   masteredCount,
   totalActiveWords,
-  onPractice,
+  onChillPractice,
+  onChaseMode,
+  className = '',
 }: TodaysMissionCardProps) {
   const getMessageAndStyle = () => {
     if (dueWordCount > 0) {
@@ -27,8 +31,7 @@ export function TodaysMissionCard({
         subtitle: dueWordCount === 1 ? "Let's master this word!" : "Let's practice and learn!",
         gradient: 'from-amber-400 via-orange-400 to-rose-400',
         icon: <Sparkles className="w-8 h-8 text-white animate-pulse" />,
-        buttonText: 'Practice Now',
-        showButton: true,
+        showButtons: true,
       };
     }
 
@@ -37,9 +40,8 @@ export function TodaysMissionCard({
         title: 'Ready for new challenges?',
         subtitle: 'Time to learn some exciting new words!',
         gradient: 'from-blue-400 via-indigo-400 to-purple-400',
-        icon: <Play className="w-8 h-8 text-white" />,
-        buttonText: 'Start Learning',
-        showButton: true,
+        icon: <Sparkles className="w-8 h-8 text-white" />,
+        showButtons: true,
       };
     }
 
@@ -49,8 +51,7 @@ export function TodaysMissionCard({
         subtitle: 'You\'re a spelling champion! Add more words to keep growing.',
         gradient: 'from-emerald-400 via-teal-400 to-cyan-400',
         icon: <Trophy className="w-8 h-8 text-white animate-bounce" />,
-        buttonText: 'Celebrate!',
-        showButton: false,
+        showButtons: false,
       };
     }
 
@@ -59,15 +60,14 @@ export function TodaysMissionCard({
       subtitle: 'Great job! Check back later for more practice.',
       gradient: 'from-green-400 via-emerald-400 to-teal-400',
       icon: <Check className="w-8 h-8 text-white" />,
-      buttonText: 'Practice Anyway',
-      showButton: totalActiveWords > 0,
+      showButtons: totalActiveWords > 0,
     };
   };
 
-  const { title, subtitle, gradient, icon, buttonText, showButton } = getMessageAndStyle();
+  const { title, subtitle, gradient, icon, showButtons } = getMessageAndStyle();
 
   return (
-    <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-r ${gradient} p-6 shadow-lg`}>
+    <div className={`relative overflow-hidden rounded-2xl bg-gradient-to-r ${gradient} p-6 shadow-lg flex flex-col ${className}`}>
       {/* Decorative circles */}
       <div className="absolute -top-8 -right-8 w-32 h-32 bg-white/10 rounded-full" />
       <div className="absolute -bottom-4 -left-4 w-24 h-24 bg-white/10 rounded-full" />
@@ -91,17 +91,27 @@ export function TodaysMissionCard({
           </div>
         </div>
 
-        {showButton && (
-          <div className="mt-5">
+        {showButtons && (
+          <div className="mt-5 flex flex-col gap-3">
             <Button
-              onClick={onPractice}
+              onClick={onChillPractice}
               variant="secondary"
               className="w-full bg-white hover:bg-gray-50 text-gray-800 font-bold py-3 shadow-lg
                        transform transition-all hover:scale-[1.02] active:scale-[0.98]
                        flex items-center justify-center gap-2"
             >
-              <Play className="w-5 h-5" />
-              {buttonText}
+              <Leaf className="w-5 h-5 text-green-600" />
+              Chill Practice
+            </Button>
+            <Button
+              onClick={onChaseMode}
+              variant="secondary"
+              className="w-full bg-white hover:bg-gray-50 text-gray-800 font-bold py-3 shadow-lg
+                       transform transition-all hover:scale-[1.02] active:scale-[0.98]
+                       flex items-center justify-center gap-2"
+            >
+              <Trophy className="w-5 h-5 text-amber-500" />
+              Run for Trophies
             </Button>
           </div>
         )}

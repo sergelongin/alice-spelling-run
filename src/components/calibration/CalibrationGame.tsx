@@ -5,11 +5,12 @@ import { CalibrationProgress } from './CalibrationProgress';
 import { PlayerSprite } from '@/components/game/PlayerSprite';
 import { DefinitionCompact } from '@/components/game/DefinitionDisplay';
 import { CALIBRATION_CONFIG } from '@/types/calibration';
-import { GradeLevel, GRADE_WORDS } from '@/data/gradeWords';
+import { GradeLevel } from '@/data/gradeWords';
+import { useWordCatalog } from '@/hooks/useWordCatalog';
 
 interface CalibrationGameProps {
   currentWord: string;
-  currentGrade: GradeLevel;
+  currentGrade: GradeLevel; // Used for display context, not word lookup
   wordsCompleted: number;
   progress: number;
   onSubmit: (isCorrect: boolean) => void;
@@ -34,7 +35,7 @@ const INCORRECT_MESSAGES = [
 
 export function CalibrationGame({
   currentWord,
-  currentGrade,
+  currentGrade: _currentGrade, // Used in interface for context, but not for word lookup
   wordsCompleted,
   progress,
   onSubmit,
@@ -48,21 +49,14 @@ export function CalibrationGame({
   const inputRef = useRef<HTMLInputElement>(null);
   const { speak, isSpeaking } = useTextToSpeech();
 
+  // Get word catalog for definition lookups
+  const { findWord } = useWordCatalog();
+
   // Look up the definition for the current word
   const currentDefinition = useMemo(() => {
-    const wordLower = currentWord.toLowerCase();
-    // Search in current grade first, then adjacent grades
-    const gradesToSearch: GradeLevel[] = [currentGrade];
-    if (currentGrade > 3) gradesToSearch.push((currentGrade - 1) as GradeLevel);
-    if (currentGrade < 6) gradesToSearch.push((currentGrade + 1) as GradeLevel);
-
-    for (const grade of gradesToSearch) {
-      const gradeWords = GRADE_WORDS[grade] || [];
-      const found = gradeWords.find(wd => wd.word.toLowerCase() === wordLower);
-      if (found) return found.definition;
-    }
-    return undefined;
-  }, [currentWord, currentGrade]);
+    const catalogWord = findWord(currentWord);
+    return catalogWord?.definition;
+  }, [currentWord, findWord]);
 
   // Focus input on mount and word change
   useEffect(() => {

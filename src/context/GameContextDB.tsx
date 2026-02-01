@@ -14,7 +14,8 @@ import React, { createContext, useContext, useCallback, useMemo, useEffect, useS
 import { useDatabase } from '@/db/hooks';
 import { useAuth } from '@/context/AuthContext';
 import { defaultWords } from '@/data/defaultWords';
-import { GradeLevel, GRADE_WORDS, WordDefinition } from '@/data/gradeWords';
+import { GradeLevel, WordDefinition } from '@/data/gradeWords';
+import { getWordsForGradeAsync } from '@/hooks/useWordCatalog';
 import type {
   WordBank,
   GameStatistics,
@@ -30,6 +31,10 @@ interface GameContextValue {
   // Loading state
   isLoading: boolean;
   isSyncing: boolean;
+
+  // Initial sync state (for new devices)
+  needsInitialSync: boolean;
+  initialSyncCompleted: boolean;
 
   // Word Bank
   wordBank: WordBank;
@@ -84,7 +89,7 @@ interface GameProviderProps {
 
 export function GameProvider({ children, childId }: GameProviderProps) {
   // Access auth context for activeChild data and updateChild function
-  const { activeChild, updateChild } = useAuth();
+  const { activeChild, updateChild, registerPreSyncCallback } = useAuth();
 
   // Check online status
   const [isOnline, setIsOnline] = useState(navigator.onLine);
@@ -104,6 +109,13 @@ export function GameProvider({ children, childId }: GameProviderProps) {
 
   // Database hook provides all state and operations
   const db = useDatabase(childId, isOnline);
+
+  // Register syncNow with AuthContext so it can trigger sync before logout/child-switch
+  useEffect(() => {
+    if (registerPreSyncCallback && db.syncNow) {
+      registerPreSyncCallback(db.syncNow);
+    }
+  }, [registerPreSyncCallback, db.syncNow]);
 
   // Track if pending import has been handled to prevent duplicate imports
   const pendingImportHandled = useRef<string | null>(null);
@@ -134,8 +146,8 @@ export function GameProvider({ children, childId }: GameProviderProps) {
       console.log(`[GameProvider] Processing pending grade import: Grade ${gradeToImport} for child ${childId}`);
 
       try {
-        // Import grade words using the existing importGradeWords function
-        const gradeWordList = GRADE_WORDS[gradeToImport] || [];
+        // Import grade words from local word catalog (falls back to bundled files)
+        const gradeWordList = await getWordsForGradeAsync(gradeToImport);
         let addedCount = 0;
 
         for (const wordDef of gradeWordList) {
@@ -173,10 +185,11 @@ export function GameProvider({ children, childId }: GameProviderProps) {
     }
   }, [db.addWord]);
 
-  // Import grade-level words
+  // Import grade-level words from local word catalog
   // Note: addWord handles deduplication atomically, so no need for client-side checks
   const importGradeWords = useCallback(async (grade: GradeLevel): Promise<number> => {
-    const gradeWordList = GRADE_WORDS[grade] || [];
+    // Get words from local catalog (falls back to bundled files if catalog empty)
+    const gradeWordList = await getWordsForGradeAsync(grade);
     let addedCount = 0;
 
     for (const wordDef of gradeWordList) {
@@ -237,6 +250,8 @@ export function GameProvider({ children, childId }: GameProviderProps) {
     () => ({
       isLoading: db.isLoading,
       isSyncing: db.isSyncing,
+      needsInitialSync: db.needsInitialSync,
+      initialSyncCompleted: db.initialSyncCompleted,
       wordBank: db.wordBank,
       addWord: db.addWord,
       removeWord: db.removeWord,
@@ -270,6 +285,8 @@ export function GameProvider({ children, childId }: GameProviderProps) {
     [
       db.isLoading,
       db.isSyncing,
+      db.needsInitialSync,
+      db.initialSyncCompleted,
       db.wordBank,
       db.addWord,
       db.removeWord,

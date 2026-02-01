@@ -9,6 +9,7 @@ import { Button, Modal, WordDetailModal } from '../common';
 import { WordManagementTable } from './WordManagementTable';
 import { WordCatalogModal } from './WordCatalogModal';
 import { AddWordsModal } from './AddWordsModal';
+import { WordDistributionSummary } from './WordDistributionSummary';
 import { useGameContext } from '@/context/GameContextDB';
 import { Word } from '@/types';
 import { GRADE_INFO, GradeLevel, WordDefinition } from '@/data/gradeWords';
@@ -180,6 +181,9 @@ export function ParentWordBank({ hideHeader = false, childName }: ParentWordBank
             )}
           </div>
         </div>
+
+        {/* Word Distribution Summary */}
+        <WordDistributionSummary words={wordBank.words} childName={childName} />
 
         {/* Word Management Table */}
         <WordManagementTable

@@ -8,7 +8,7 @@ import { Button } from '@/components/common';
 import { EditProfileModal, DeleteConfirmDialog, ResetProgressDialog } from '@/components/profiles';
 import { ChildHeaderCard } from '@/components/parent';
 import { GameSessionDialog } from '@/components/statistics';
-import { GameResult } from '@/types';
+import { GameResult, WordAttempt } from '@/types';
 import { getTrophyEmoji } from '@/utils';
 
 // Format date to a friendly string
@@ -239,6 +239,17 @@ export function ChildSessionHistoryScreen() {
   // Load child data from WatermelonDB
   const { wordBank, statistics } = useChildData(childId || '');
 
+  // Build attempts map from word bank - all historical attempts for each word
+  const attemptsMap = useMemo(() => {
+    const map = new Map<string, WordAttempt[]>();
+    for (const word of wordBank.words) {
+      if (word.attemptHistory?.length > 0) {
+        map.set(word.text.toLowerCase(), word.attemptHistory);
+      }
+    }
+    return map;
+  }, [wordBank.words]);
+
   // Request PIN on mount if not authorized
   useEffect(() => {
     if (!isAuthorized) {
@@ -355,6 +366,7 @@ export function ChildSessionHistoryScreen() {
         game={selectedSession}
         isOpen={selectedSession !== null}
         onClose={() => setSelectedSession(null)}
+        attemptsMap={attemptsMap}
       />
 
       {/* Edit Profile Modal */}

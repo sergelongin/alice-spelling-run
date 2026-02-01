@@ -1,10 +1,10 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Trophy, Calendar, Target, Flame, Flower2, TreePalm, ChevronLeft, ChevronRight } from 'lucide-react';
 import { Button } from '../common';
 import { AccuracyTrendChart, GameSessionDialog } from '../statistics';
 import { useFreshGameData } from '@/hooks';
-import { TrophyTier, StatsModeId, ModeStatistics, GameResult, createInitialModeStatistics } from '@/types';
+import { TrophyTier, StatsModeId, ModeStatistics, GameResult, WordAttempt, createInitialModeStatistics } from '@/types';
 import { getTrophyEmoji, getTrophyColor } from '@/utils';
 
 const ITEMS_PER_PAGE = 10;
@@ -29,10 +29,21 @@ const MODE_TABS: ModeTab[] = [
 
 export function StatisticsScreen() {
   const navigate = useNavigate();
-  const { statistics, isLoading } = useFreshGameData();
+  const { statistics, wordBank, isLoading } = useFreshGameData();
   const [activeTab, setActiveTab] = useState<TabId>('all');
   const [currentPage, setCurrentPage] = useState(1);
   const [selectedGame, setSelectedGame] = useState<GameResult | null>(null);
+
+  // Build attempts map from word bank - all historical attempts for each word
+  const attemptsMap = useMemo(() => {
+    const map = new Map<string, WordAttempt[]>();
+    for (const word of wordBank.words) {
+      if (word.attemptHistory?.length > 0) {
+        map.set(word.text.toLowerCase(), word.attemptHistory);
+      }
+    }
+    return map;
+  }, [wordBank.words]);
 
   // Show loading spinner while WatermelonDB subscriptions initialize
   if (isLoading) {
@@ -294,6 +305,7 @@ export function StatisticsScreen() {
         game={selectedGame}
         isOpen={selectedGame !== null}
         onClose={() => setSelectedGame(null)}
+        attemptsMap={attemptsMap}
       />
     </div>
   );

@@ -18,12 +18,12 @@ import { useGameState, useGameTimer, useTextToSpeech, useSpellingHint, useWordCo
 import { selectWordsForSessionDetailed } from '@/utils';
 import { GameModeId, getGameModeConfig } from '@/types';
 import { defaultWords } from '@/data/defaultWords';
-import { GRADE_WORDS } from '@/data/gradeWords';
+import { useWordCatalog } from '@/hooks/useWordCatalog';
 
 export function GameScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { wordBank, recordGame, markWordsAsIntroduced, recordWordAttempt } = useGameContext();
+  const { wordBank, recordGame, markWordsAsIntroduced, recordWordAttempt, syncNow } = useGameContext();
   const { speak, isSupported: ttsSupported } = useTextToSpeech();
 
   // Get mode from route state, default to savannah
@@ -71,8 +71,11 @@ export function GameScreen() {
     formatPronunciation,
   } = useWordContext();
 
+  // Word catalog for definition fallback lookups
+  const { findWord: findCatalogWord } = useWordCatalog();
+
   // Look up the current word's full data (definition, example sentence) from wordBank
-  // Falls back to defaultWords and gradeWords for words imported before definitions were added
+  // Falls back to defaultWords and word catalog for words imported before definitions were added
   const currentWordData = useMemo(() => {
     const currentWord = getCurrentWord();
     if (!currentWord) return null;
@@ -93,15 +96,12 @@ export function GameScreen() {
       }
     }
 
-    // Fall back to grade words if still not found
+    // Fall back to word catalog (local cache or bundled files) if still not found
     if (!definition || !exampleSentence) {
-      for (const gradeWordList of Object.values(GRADE_WORDS)) {
-        const gradeWord = gradeWordList.find(w => w.word.toLowerCase() === wordLower);
-        if (gradeWord) {
-          definition = definition || gradeWord.definition;
-          exampleSentence = exampleSentence || gradeWord.example;
-          break;
-        }
+      const catalogWord = findCatalogWord(currentWord);
+      if (catalogWord) {
+        definition = definition || catalogWord.definition;
+        exampleSentence = exampleSentence || catalogWord.example;
       }
     }
 
@@ -110,7 +110,7 @@ export function GameScreen() {
       definition,
       exampleSentence,
     };
-  }, [getCurrentWord, wordBank.words]);
+  }, [getCurrentWord, wordBank.words, findCatalogWord]);
 
   // Spelling hint system (only for Meadow mode with Wordle feedback)
   const isMeadowMode = modeConfig.feedbackStyle === 'wordle';
@@ -342,6 +342,11 @@ export function GameScreen() {
       (async () => {
         if (result) {
           await recordGame(result);
+
+          // Fire-and-forget sync after game recording to push data to server
+          syncNow().catch(err => {
+            console.warn('[GameScreen] Post-game sync failed (ignored):', err);
+          });
         }
 
         // Navigate to appropriate end screen based on mode after a delay
@@ -358,7 +363,7 @@ export function GameScreen() {
         }, delay);
       })();
     }
-  }, [gameState.status, modeId, recordGame, timer, getGameResult, navigate]);
+  }, [gameState.status, modeId, recordGame, syncNow, timer, getGameResult, navigate]);
 
   const handleRepeat = useCallback(async () => {
     const currentWord = getCurrentWord();

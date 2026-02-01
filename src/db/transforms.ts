@@ -103,12 +103,38 @@ export interface ServerWordAttempt {
   created_at: string;
 }
 
+export interface ServerLearningProgress {
+  id: string;
+  child_id: string;
+  total_lifetime_points: number;
+  current_milestone_index: number;
+  milestone_progress: number;
+  point_history: unknown[] | null;
+  client_updated_at: string;
+  updated_at: string;
+}
+
+export interface ServerGradeProgress {
+  id: string;
+  child_id: string;
+  grade_level: number;
+  total_points: number;
+  current_milestone_index: number;
+  words_mastered: number;
+  first_point_at: string | null;
+  last_activity_at: string | null;
+  client_updated_at: string;
+  updated_at: string;
+}
+
 export interface ServerPullResponse {
   word_progress: ServerWordProgress[];
   game_sessions: ServerGameSession[];
   statistics: ServerStatistics[];
   calibration: ServerCalibration[];
   word_attempts: ServerWordAttempt[];
+  learning_progress: ServerLearningProgress[];
+  grade_progress: ServerGradeProgress[];
   timestamp: string;
   last_reset_at: string | null;
 }
@@ -129,6 +155,7 @@ export interface SyncChangeset {
   statistics: SyncTableChanges;
   calibration: SyncTableChanges;
   learning_progress: SyncTableChanges;
+  grade_progress: SyncTableChanges;
   word_bank_metadata: SyncTableChanges;
   word_attempts: SyncTableChanges;
 }
@@ -242,7 +269,43 @@ export function transformWordAttemptFromServer(row: ServerWordAttempt): RawRecor
 }
 
 /**
+ * Convert server learning progress to WatermelonDB raw record
+ */
+export function transformLearningProgressFromServer(row: ServerLearningProgress): RawRecord {
+  return {
+    id: row.id,
+    child_id: row.child_id,
+    total_points: row.total_lifetime_points, // Map to legacy field for backward compatibility
+    total_lifetime_points: row.total_lifetime_points,
+    current_milestone_index: row.current_milestone_index,
+    milestone_progress: row.milestone_progress,
+    point_history_json: row.point_history ? JSON.stringify(row.point_history) : null,
+    client_updated_at: row.client_updated_at ? new Date(row.client_updated_at).getTime() : null,
+    server_id: row.id,
+  };
+}
+
+/**
+ * Convert server grade progress to WatermelonDB raw record
+ */
+export function transformGradeProgressFromServer(row: ServerGradeProgress): RawRecord {
+  return {
+    id: row.id,
+    child_id: row.child_id,
+    grade_level: row.grade_level,
+    total_points: row.total_points,
+    current_milestone_index: row.current_milestone_index,
+    words_mastered: row.words_mastered,
+    first_point_at: row.first_point_at ? new Date(row.first_point_at).getTime() : null,
+    last_activity_at: row.last_activity_at ? new Date(row.last_activity_at).getTime() : null,
+    client_updated_at: row.client_updated_at ? new Date(row.client_updated_at).getTime() : null,
+    server_id: row.id,
+  };
+}
+
+/**
  * Transform full server pull response to WatermelonDB sync changes
+ * Note: This is used as a fallback; reconcilePullChanges handles actual sync
  */
 export function transformPullChanges(serverData: ServerPullResponse): SyncChangeset {
   return {
@@ -267,7 +330,12 @@ export function transformPullChanges(serverData: ServerPullResponse): SyncChange
       deleted: [],
     },
     learning_progress: {
-      created: [],
+      created: (serverData.learning_progress || []).map(transformLearningProgressFromServer),
+      updated: [],
+      deleted: [],
+    },
+    grade_progress: {
+      created: (serverData.grade_progress || []).map(transformGradeProgressFromServer),
       updated: [],
       deleted: [],
     },
@@ -290,10 +358,12 @@ export function transformPullChanges(serverData: ServerPullResponse): SyncChange
 
 /**
  * Convert WatermelonDB word progress to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
  */
 export function transformWordProgressToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
+    child_id: r['child_id'],
     word_text: r['word_text'],
     mastery_level: r['mastery_level'],
     correct_streak: r['correct_streak'],
@@ -318,10 +388,12 @@ export function transformWordProgressToServer(record: RawRecord): Record<string,
 
 /**
  * Convert WatermelonDB game session to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
  */
 export function transformGameSessionToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
+    child_id: r['child_id'],
     client_session_id: r['client_session_id'],
     mode: r['mode'],
     played_at: new Date(r['played_at'] as number).toISOString(),
@@ -341,10 +413,12 @@ export function transformGameSessionToServer(record: RawRecord): Record<string, 
 
 /**
  * Convert WatermelonDB statistics to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
  */
 export function transformStatisticsToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
+    child_id: r['child_id'],
     mode: r['mode'],
     total_games_played: r['total_games_played'],
     total_wins: r['total_wins'],
@@ -373,10 +447,12 @@ export function transformStatisticsToServer(record: RawRecord): Record<string, u
 
 /**
  * Convert WatermelonDB calibration to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
  */
 export function transformCalibrationToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
+    child_id: r['child_id'],
     client_calibration_id: r['client_calibration_id'],
     completed_at: new Date(r['completed_at'] as number).toISOString(),
     status: r['status'],
@@ -394,10 +470,12 @@ export function transformCalibrationToServer(record: RawRecord): Record<string, 
 
 /**
  * Convert WatermelonDB word attempt to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
  */
 export function transformWordAttemptToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
+    child_id: r['child_id'],
     word_text: r['word_text'],
     client_attempt_id: r['client_attempt_id'],
     attempt_number: r['attempt_number'],
@@ -407,6 +485,50 @@ export function transformWordAttemptToServer(record: RawRecord): Record<string, 
     time_ms: r['time_ms'],
     attempted_at: new Date(r['attempted_at'] as number).toISOString(),
     session_id: r['session_id'],
+  };
+}
+
+/**
+ * Convert WatermelonDB learning progress to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
+ */
+export function transformLearningProgressToServer(record: RawRecord): Record<string, unknown> {
+  const r = record as Record<string, unknown>;
+  return {
+    child_id: r['child_id'],
+    total_lifetime_points: r['total_lifetime_points'] ?? r['total_points'], // Use new field or fallback to legacy
+    current_milestone_index: r['current_milestone_index'],
+    milestone_progress: r['milestone_progress'],
+    point_history: r['point_history_json']
+      ? JSON.parse(r['point_history_json'] as string)
+      : null,
+    client_updated_at: r['client_updated_at']
+      ? new Date(r['client_updated_at'] as number).toISOString()
+      : new Date().toISOString(),
+  };
+}
+
+/**
+ * Convert WatermelonDB grade progress to server format
+ * IMPORTANT: child_id is included so RPC can use the record's own child_id
+ */
+export function transformGradeProgressToServer(record: RawRecord): Record<string, unknown> {
+  const r = record as Record<string, unknown>;
+  return {
+    child_id: r['child_id'],
+    grade_level: r['grade_level'],
+    total_points: r['total_points'],
+    current_milestone_index: r['current_milestone_index'],
+    words_mastered: r['words_mastered'],
+    first_point_at: r['first_point_at']
+      ? new Date(r['first_point_at'] as number).toISOString()
+      : null,
+    last_activity_at: r['last_activity_at']
+      ? new Date(r['last_activity_at'] as number).toISOString()
+      : null,
+    client_updated_at: r['client_updated_at']
+      ? new Date(r['client_updated_at'] as number).toISOString()
+      : new Date().toISOString(),
   };
 }
 
@@ -431,6 +553,14 @@ export function transformPushChanges(changes: SyncChangeset): Record<string, unk
     },
     word_attempts: {
       created: changes.word_attempts.created.map(transformWordAttemptToServer),
+    },
+    learning_progress: {
+      created: changes.learning_progress.created.map(transformLearningProgressToServer),
+      updated: changes.learning_progress.updated.map(transformLearningProgressToServer),
+    },
+    grade_progress: {
+      created: changes.grade_progress.created.map(transformGradeProgressToServer),
+      updated: changes.grade_progress.updated.map(transformGradeProgressToServer),
     },
   };
 }

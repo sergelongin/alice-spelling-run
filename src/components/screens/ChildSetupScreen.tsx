@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import { User, Sparkles, AlertCircle, Calendar } from 'lucide-react';
 import { useChildren } from '@/hooks/useChildren';
 import { useAuth } from '@/context/AuthContext';
-import { GradeLevel, GRADE_WORDS } from '@/data/gradeWords';
+import { GradeLevel } from '@/data/gradeWords';
+import { useWordCatalog } from '@/hooks/useWordCatalog';
 
 const GRADE_OPTIONS = [
   { value: 3 as const, label: 'Grade 3', description: 'Ages 8-9' },
@@ -34,10 +35,11 @@ const YEARS = Array.from({ length: currentYear - 2010 + 1 }, (_, i) => 2010 + i)
 type SelectionMode = 'detect' | GradeLevel | null;
 
 function GradeExampleWords({ grade }: { grade: GradeLevel }) {
-  const examples = GRADE_WORDS[grade].slice(0, 5).map(w => w.word);
+  const { getWordsForGrade } = useWordCatalog();
+  const examples = getWordsForGrade(grade).slice(0, 5).map(w => w.word);
   return (
     <div className="mt-2 text-sm text-gray-500">
-      Examples: {examples.join(', ')}
+      Examples: {examples.length > 0 ? examples.join(', ') : 'Loading...'}
     </div>
   );
 }

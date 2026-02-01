@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useEffect, useState, useCallback, useMemo, useRef, type ReactNode } from 'react';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import {
   getCachedSession,
@@ -24,6 +24,9 @@ import type {
 } from '@/types/auth';
 import { revokeParentDashboardAccess } from '@/hooks/useParentDashboardAccess';
 import { resetWatermelonDBForChild } from '@/db/resetChild';
+import { syncWordCatalog, shouldSyncWordCatalog } from '@/db/syncWordCatalog';
+import { syncAllChildren, syncWithSupabase } from '@/db/sync';
+import { clearLastPulledAt, clearAllSyncTimestamps } from '@/db/syncTimestamps';
 
 const ACTIVE_CHILD_KEY = 'alice-spelling-run-active-child';
 const SESSION_PROFILE_SELECTED_KEY = 'alice-spelling-run-profile-selected';
@@ -110,6 +113,14 @@ const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children: childrenNodes }: { children: ReactNode }) {
   const [state, setState] = useState<AuthState>(() => createOptimisticState());
+
+  // Ref for pre-sync callback (registered by GameProvider to sync before logout/child-switch)
+  const preSyncCallbackRef = useRef<(() => Promise<void>) | null>(null);
+
+  // Register pre-sync callback (called by GameProvider)
+  const registerPreSyncCallback = useCallback((callback: () => Promise<void>) => {
+    preSyncCallbackRef.current = callback;
+  }, []);
 
   // Fetch user profile from profiles table
   const fetchProfile = useCallback(async (userId: string): Promise<UserProfile | null> => {
@@ -206,6 +217,29 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
           error: null,
           hasSelectedProfileThisSession: prev.hasSelectedProfileThisSession,
         }));
+
+        // Sync word catalog in background (non-blocking)
+        // This populates the local WatermelonDB cache with system words + parent's custom words
+        if (shouldSyncWordCatalog(session.user.id)) {
+          syncWordCatalog(session.user.id).catch(err => {
+            console.warn('[Auth] Word catalog sync failed (non-fatal):', err);
+          });
+        }
+
+        // Sync all children's data in background (non-blocking)
+        // This ensures each child has their data synced with per-child timestamps
+        if (childrenList.length > 0) {
+          syncAllChildren(childrenList.map(c => ({ id: c.id, name: c.name })))
+            .then(result => {
+              console.log('[Auth] All children synced on login:', result.success ? 'success' : 'partial failure');
+              if (!result.success) {
+                console.warn('[Auth] Some children failed to sync:', result.results.filter(r => r.status === 'error'));
+              }
+            })
+            .catch(err => {
+              console.warn('[Auth] Multi-child sync failed (non-fatal):', err);
+            });
+        }
       } catch (error) {
         console.error('[Auth] Validation error:', error);
         if (cancelled) return;
@@ -284,9 +318,28 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
               // Preserve profile selection if they had an active child (session refresh)
               hasSelectedProfileThisSession: hadActiveChild,
             });
+
+            // Sync word catalog in background (non-blocking)
+            if (shouldSyncWordCatalog(session.user.id)) {
+              syncWordCatalog(session.user.id).catch(err => {
+                console.warn('[Auth] Word catalog sync failed (non-fatal):', err);
+              });
+            }
+
+            // Sync all children's data in background (non-blocking)
+            if (childrenList.length > 0) {
+              syncAllChildren(childrenList.map(c => ({ id: c.id, name: c.name })))
+                .then(result => {
+                  console.log('[Auth] All children synced on sign-in:', result.success ? 'success' : 'partial failure');
+                })
+                .catch(err => {
+                  console.warn('[Auth] Multi-child sync on sign-in failed (non-fatal):', err);
+                });
+            }
           }, 0);
         } else if (event === 'SIGNED_OUT') {
           clearAllAuthCache();
+          clearAllSyncTimestamps(); // Clear per-child sync timestamps on logout
           setProfileSelectedThisSession(false);
           setState({ ...initialState, isLoading: false, isValidating: false, cacheStatus: 'none', hasSelectedProfileThisSession: false });
         } else if (event === 'TOKEN_REFRESHED' && session) {
@@ -347,6 +400,13 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
   // Sign out - RELIABLE: Clear state first, then tell Supabase
   const signOut = useCallback(async () => {
+    // 0. Fire pre-sync callback (don't await - fire and forget)
+    if (preSyncCallbackRef.current) {
+      preSyncCallbackRef.current().catch(err => {
+        console.warn('[Auth] Pre-logout sync failed (ignored):', err);
+      });
+    }
+
     // 1. Clear all caches FIRST (synchronous, guaranteed)
     clearAllAuthCache();
 
@@ -553,6 +613,10 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
         const watermelonCounts = await resetWatermelonDBForChild(childId);
         console.log('[Auth] WatermelonDB cleared:', watermelonCounts);
 
+        // 4. Clear per-child sync timestamp (forces full re-sync on next sync)
+        clearLastPulledAt(childId);
+        console.log('[Auth] Cleared sync timestamp for child:', childId);
+
         // Delay to ensure IndexedDB has flushed before any potential reload
         // IndexedDB writes can be async at the browser level
         await new Promise(resolve => setTimeout(resolve, 500));
@@ -590,10 +654,23 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       activeChild: prev.children.find(c => c.id === childId) || null,
       hasSelectedProfileThisSession: true,
     }));
+
+    // Sync the newly selected child immediately in background
+    // This ensures their data is up-to-date using their per-child timestamp
+    syncWithSupabase(childId).catch(err => {
+      console.warn('[Auth] Sync on profile switch failed (non-fatal):', err);
+    });
   }, []);
 
   // Clear profile selection (for "Switch Profile" functionality)
   const clearProfileSelection = useCallback(() => {
+    // Fire pre-sync callback (don't await - fire and forget)
+    if (preSyncCallbackRef.current) {
+      preSyncCallbackRef.current().catch(err => {
+        console.warn('[Auth] Pre-child-switch sync failed (ignored):', err);
+      });
+    }
+
     // Revoke parent dashboard access when clearing profile selection
     revokeParentDashboardAccess();
 
@@ -624,6 +701,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       signUp,
       signIn,
       signOut,
+      registerPreSyncCallback,
       updateProfile,
       addChild,
       updateChild,
@@ -644,6 +722,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       signUp,
       signIn,
       signOut,
+      registerPreSyncCallback,
       updateProfile,
       addChild,
       updateChild,

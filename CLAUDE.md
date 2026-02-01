@@ -137,12 +137,13 @@ The app uses WatermelonDB for offline-first local storage with Supabase sync.
 - Never add `_status: 'synced'` or `_changed: ''` to transform functions
 - `synchronize()` does NOT need `migrationsEnabledAtVersion` unless using WatermelonDB migrations
 
-**CRITICAL - Multi-User Database:**
+**Multi-User Database Architecture:**
 - WatermelonDB `synchronize()` operates on the **ENTIRE database**, not per-user
 - `pushChanges()` receives ALL pending records from ALL children in the local DB
-- **You MUST filter pushChanges by child_id** before sending to server
-- Without filtering, syncing Child B would push Child A's records under Child B's ID
-- See `filterChangesByChildId()` in `sync.ts` for the implementation
+- Each record includes its own `child_id` in the push payload
+- The RPC uses the record's `child_id` (not a parameter) for inserts/updates
+- The RPC validates that the authenticated parent owns each `child_id`
+- This allows syncing ALL children's data in one push operation
 
 **Custom Reconciliation:**
 The sync uses business-key reconciliation instead of ID matching because client and server generate different UUIDs:
@@ -163,7 +164,7 @@ The sync uses business-key reconciliation instead of ID matching because client 
 | `Migration syncs cannot be enabled on a database that does not support migrations` | `migrationsEnabledAtVersion` set but no migrations configured | Remove `migrationsEnabledAtVersion` from `synchronize()` |
 | `Invalid raw record... must NOT have _status or _changed fields` | Transform functions adding WatermelonDB internal fields | Remove `_status` and `_changed` from `transform*FromServer()` functions |
 | `operator does not exist: json \|\| json` | Using `\|\|` concatenation on `json` type | Cast to `jsonb` before concatenation (see PostgreSQL JSON vs JSONB) |
-| Cross-child data pollution (Child A's data appears in Child B) | `pushChanges()` sends ALL records, server writes with single child_id | Filter changes by `child_id` before pushing (see `filterChangesByChildId()`) |
+| Cross-child data pollution (Child A's data appears in Child B) | Old RPC uses `p_child_id` param for all inserts | Apply migration `024_push_uses_record_child_id.sql` - RPC now uses record's `child_id` |
 | Word detail shows "No attempts" despite practice | `attempt_history_json` JSONB field was never synced | Use `word_attempts` table instead; `migrateLocalAttemptHistory()` salvages local data |
 
 **JSONB Fields Don't Auto-Sync:**
@@ -172,7 +173,9 @@ JSONB fields (like `attempt_history_json`) require explicit handling in transfor
 **Supabase RPC Functions:**
 - `pull_changes(p_child_id, p_last_pulled_at)` - Returns all data updated since timestamp
 - `push_changes(p_child_id, p_changes)` - Processes client changes with conflict resolution
-- Defined in `supabase/migrations/009_watermelon_sync.sql` (fixed in `012_fix_push_changes_jsonb.sql`)
+  - Uses each record's `child_id` (not `p_child_id`) for inserts/updates
+  - Validates parent ownership of each child_id before processing
+- Defined in `supabase/migrations/009_watermelon_sync.sql` (updated in `024_push_uses_record_child_id.sql`)
 
 ### Supabase (Database & Auth)
 

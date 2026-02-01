@@ -2,12 +2,41 @@ import { useState, useEffect } from 'react';
 import { AlertTriangle, Clock, BookX } from 'lucide-react';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '@/db';
-import type { WordProgress } from '@/db/models';
+import type { WordProgress, WordAttemptModel } from '@/db/models';
 import type { ChildProfile } from '@/types/auth';
 import type { AttentionItem } from '@/types/parent';
+import type { WordAttempt } from '@/types';
 
 interface AttentionNeededListProps {
   children: ChildProfile[];
+}
+
+/**
+ * Build a map of word_text -> WordAttempt[] from attempt records, grouped by child
+ * Returns a nested map: childId -> wordText -> WordAttempt[]
+ */
+function buildAttemptsMapByChild(attempts: WordAttemptModel[]): Map<string, Map<string, WordAttempt[]>> {
+  const childMap = new Map<string, Map<string, WordAttempt[]>>();
+  for (const attempt of attempts) {
+    if (!childMap.has(attempt.childId)) {
+      childMap.set(attempt.childId, new Map());
+    }
+    const wordMap = childMap.get(attempt.childId)!;
+    const key = attempt.wordText.toLowerCase();
+    if (!wordMap.has(key)) {
+      wordMap.set(key, []);
+    }
+    wordMap.get(key)!.push({
+      id: attempt.clientAttemptId,
+      timestamp: attempt.attemptedAt,
+      wasCorrect: attempt.wasCorrect,
+      typedText: attempt.typedText,
+      mode: attempt.mode,
+      timeMs: attempt.timeMs,
+      attemptNumber: attempt.attemptNumber,
+    });
+  }
+  return childMap;
 }
 
 /**
@@ -15,100 +44,135 @@ interface AttentionNeededListProps {
  */
 export function AttentionNeededList({ children }: AttentionNeededListProps) {
   const [attentionItems, setAttentionItems] = useState<AttentionItem[]>([]);
+  const [wordProgressRecords, setWordProgressRecords] = useState<WordProgress[]>([]);
+  const [wordAttemptRecords, setWordAttemptRecords] = useState<WordAttemptModel[]>([]);
 
-  // Subscribe to word progress for all children to compute attention items
+  // Subscribe to word progress and word attempts for all children
+  useEffect(() => {
+    if (children.length === 0) {
+      setWordProgressRecords([]);
+      setWordAttemptRecords([]);
+      return;
+    }
+
+    const childIds = children.map(c => c.id);
+    const subscriptions: { unsubscribe: () => void }[] = [];
+
+    // Word Progress subscription
+    const wpCollection = database.get<WordProgress>('word_progress');
+    const wpSubscription = wpCollection
+      .query(Q.where('child_id', Q.oneOf(childIds)))
+      .observe()
+      .subscribe(records => {
+        setWordProgressRecords(records);
+      });
+    subscriptions.push(wpSubscription);
+
+    // Word Attempts subscription (for attemptHistory data)
+    const waCollection = database.get<WordAttemptModel>('word_attempts');
+    const waSubscription = waCollection
+      .query(Q.where('child_id', Q.oneOf(childIds)))
+      .observe()
+      .subscribe(records => {
+        setWordAttemptRecords(records);
+      });
+    subscriptions.push(waSubscription);
+
+    return () => {
+      for (const sub of subscriptions) {
+        sub.unsubscribe();
+      }
+    };
+  }, [children]);
+
+  // Compute attention items when data changes
   useEffect(() => {
     if (children.length === 0) {
       setAttentionItems([]);
       return;
     }
 
-    const childIds = children.map(c => c.id);
-    const collection = database.get<WordProgress>('word_progress');
+    const items: AttentionItem[] = [];
 
-    const subscription = collection
-      .query(Q.where('child_id', Q.oneOf(childIds)))
-      .observe()
-      .subscribe(records => {
-        const items: AttentionItem[] = [];
+    // Build attempts map by child
+    const attemptsByChild = buildAttemptsMapByChild(wordAttemptRecords);
 
-        // Group records by child
-        const recordsByChild = new Map<string, WordProgress[]>();
-        for (const record of records) {
-          const existing = recordsByChild.get(record.childId) || [];
-          existing.push(record);
-          recordsByChild.set(record.childId, existing);
+    // Group word progress records by child
+    const recordsByChild = new Map<string, WordProgress[]>();
+    for (const record of wordProgressRecords) {
+      const existing = recordsByChild.get(record.childId) || [];
+      existing.push(record);
+      recordsByChild.set(record.childId, existing);
+    }
+
+    // Analyze each child
+    for (const child of children) {
+      const childRecords = recordsByChild.get(child.id) || [];
+      const childAttemptsMap = attemptsByChild.get(child.id) || new Map<string, WordAttempt[]>();
+
+      // Calculate last activity date
+      let lastActivityTs: number | null = null;
+      for (const wp of childRecords) {
+        if (wp.lastAttemptAtRaw && (!lastActivityTs || wp.lastAttemptAtRaw > lastActivityTs)) {
+          lastActivityTs = wp.lastAttemptAtRaw;
         }
+      }
 
-        // Analyze each child
-        for (const child of children) {
-          const childRecords = recordsByChild.get(child.id) || [];
+      // Calculate days since activity
+      let daysSince: number | null = null;
+      if (lastActivityTs) {
+        const diffMs = Date.now() - lastActivityTs;
+        daysSince = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+      }
 
-          // Calculate last activity date
-          let lastActivityTs: number | null = null;
-          for (const wp of childRecords) {
-            if (wp.lastAttemptAtRaw && (!lastActivityTs || wp.lastAttemptAtRaw > lastActivityTs)) {
-              lastActivityTs = wp.lastAttemptAtRaw;
-            }
-          }
-
-          // Calculate days since activity
-          let daysSince: number | null = null;
-          if (lastActivityTs) {
-            const diffMs = Date.now() - lastActivityTs;
-            daysSince = Math.floor(diffMs / (1000 * 60 * 60 * 24));
-          }
-
-          // Find struggling words (low accuracy, has been attempted)
-          const strugglingWords: string[] = [];
-          for (const wp of childRecords) {
-            if (wp.isActive === false) continue;
-            const attempts = wp.attemptHistory || [];
-            if (attempts.length < 2) continue;
-            const correctCount = attempts.filter(a => a.wasCorrect).length;
-            const accuracy = attempts.length > 0 ? (correctCount / attempts.length) * 100 : 100;
-            if (accuracy < 60) {
-              strugglingWords.push(wp.wordText);
-            }
-          }
-
-          // Check for inactivity
-          if (daysSince !== null && daysSince >= 3) {
-            items.push({
-              type: 'inactivity',
-              childId: child.id,
-              childName: child.name,
-              message: `${child.name} hasn't practiced in ${daysSince} day${daysSince === 1 ? '' : 's'}`,
-              severity: daysSince >= 7 ? 'alert' : 'warning',
-            });
-          }
-
-          // Check for struggling words
-          if (strugglingWords.length >= 3) {
-            const wordList = strugglingWords.slice(0, 3).map(w => `"${w}"`).join(', ');
-            const moreCount = strugglingWords.length - 3;
-            items.push({
-              type: 'struggling-words',
-              childId: child.id,
-              childName: child.name,
-              message: `${child.name} is struggling with ${wordList}${moreCount > 0 ? ` and ${moreCount} more` : ''}`,
-              severity: strugglingWords.length >= 5 ? 'alert' : 'warning',
-            });
-          }
+      // Find struggling words (low accuracy, has been attempted)
+      const strugglingWords: string[] = [];
+      for (const wp of childRecords) {
+        if (wp.isActive === false) continue;
+        // Get attempts from normalized table, fall back to JSONB field
+        const attempts = childAttemptsMap.get(wp.wordText.toLowerCase()) || wp.attemptHistory || [];
+        if (attempts.length < 2) continue;
+        const correctCount = attempts.filter(a => a.wasCorrect).length;
+        const accuracy = attempts.length > 0 ? (correctCount / attempts.length) * 100 : 100;
+        if (accuracy < 60) {
+          strugglingWords.push(wp.wordText);
         }
+      }
 
-        // Sort by severity (alerts first)
-        items.sort((a, b) => {
-          if (a.severity === 'alert' && b.severity !== 'alert') return -1;
-          if (a.severity !== 'alert' && b.severity === 'alert') return 1;
-          return 0;
+      // Check for inactivity
+      if (daysSince !== null && daysSince >= 3) {
+        items.push({
+          type: 'inactivity',
+          childId: child.id,
+          childName: child.name,
+          message: `${child.name} hasn't practiced in ${daysSince} day${daysSince === 1 ? '' : 's'}`,
+          severity: daysSince >= 7 ? 'alert' : 'warning',
         });
+      }
 
-        setAttentionItems(items);
-      });
+      // Check for struggling words
+      if (strugglingWords.length >= 3) {
+        const wordList = strugglingWords.slice(0, 3).map(w => `"${w}"`).join(', ');
+        const moreCount = strugglingWords.length - 3;
+        items.push({
+          type: 'struggling-words',
+          childId: child.id,
+          childName: child.name,
+          message: `${child.name} is struggling with ${wordList}${moreCount > 0 ? ` and ${moreCount} more` : ''}`,
+          severity: strugglingWords.length >= 5 ? 'alert' : 'warning',
+        });
+      }
+    }
 
-    return () => subscription.unsubscribe();
-  }, [children]);
+    // Sort by severity (alerts first)
+    items.sort((a, b) => {
+      if (a.severity === 'alert' && b.severity !== 'alert') return -1;
+      if (a.severity !== 'alert' && b.severity === 'alert') return 1;
+      return 0;
+    });
+
+    setAttentionItems(items);
+  }, [children, wordProgressRecords, wordAttemptRecords]);
 
   if (attentionItems.length === 0) {
     return (

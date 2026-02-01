@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BookOpen, Sparkles, Star, ChevronRight, ChevronLeft } from 'lucide-react';
+import { BookOpen, Sparkles, Star, Hourglass, ChevronRight, ChevronLeft } from 'lucide-react';
 import { Word } from '@/types';
 import { categorizeWordsByState, WordState } from '@/utils/wordSelection';
 
@@ -24,7 +24,11 @@ function WordProgressRow({ word, state, onClick }: WordProgressRowProps) {
   let progressPercent: number;
   let progressLabel: string;
 
-  if (state === 'learning') {
+  if (state === 'available') {
+    // Waiting to start - no progress yet
+    progressPercent = 0;
+    progressLabel = 'Waiting to start';
+  } else if (state === 'learning') {
     // Learning (mastery 0-1): Need to reach mastery 2 (Reviewing)
     // Show correctStreak progress - need consistent correct answers
     progressPercent = Math.min(word.correctStreak, 2) / 2 * 100;
@@ -148,9 +152,10 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
   const learning = [...categorized.learning].sort((a, b) => a.text.localeCompare(b.text));
   const review = [...categorized.review].sort((a, b) => a.text.localeCompare(b.text));
   const mastered = [...categorized.mastered].sort((a, b) => a.text.localeCompare(b.text));
+  const available = [...categorized.available].sort((a, b) => a.text.localeCompare(b.text));
 
   const total = learning.length + review.length + mastered.length;
-  if (total === 0) {
+  if (total === 0 && available.length === 0) {
     return (
       <div className="bg-white rounded-xl p-6 shadow-sm border border-gray-100">
         <h3 className="text-lg font-bold text-gray-800 mb-2">My Progress</h3>
@@ -187,6 +192,16 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
       textColor: 'text-green-600',
       icon: <Star size={16} />,
     },
+    // Only show Coming Soon if there are available words
+    ...(available.length > 0 ? [{
+      state: 'available' as WordState,
+      label: 'Coming Soon',
+      count: available.length,
+      words: available,
+      lightColor: 'bg-violet-100',
+      textColor: 'text-violet-600',
+      icon: <Hourglass size={16} />,
+    }] : []),
   ];
 
   return (
@@ -194,7 +209,7 @@ export function ProgressJourney({ words, onWordClick }: ProgressJourneyProps) {
       <h3 className="text-lg font-bold text-gray-800 mb-4">My Progress</h3>
 
       {/* Category buttons */}
-      <div className="grid grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
         {categories.map(cat => (
           <button
             key={cat.state}

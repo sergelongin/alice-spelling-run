@@ -12,32 +12,50 @@ Alice Spelling Run uses **WatermelonDB** for offline-first local storage with **
 ## Architecture Components
 
 ```
-┌─────────────────────────────────────────────────────────────┐
-│                        React App                            │
-│  ┌─────────────────┐    ┌─────────────────────────────┐    │
-│  │  useDatabase()  │───▶│  WatermelonDB (IndexedDB)   │    │
-│  │     hook        │    │  - word_progress            │    │
-│  └────────┬────────┘    │  - game_sessions            │    │
-│           │             │  - statistics               │    │
-│           │             │  - calibration              │    │
-│           ▼             └──────────────┬──────────────┘    │
-│  ┌─────────────────┐                   │                   │
-│  │ syncWithSupabase│◀──────────────────┘                   │
-│  │   (sync.ts)     │                                       │
-│  └────────┬────────┘                                       │
-└───────────┼─────────────────────────────────────────────────┘
-            │
-            ▼
-┌───────────────────────────────────────────────────────────────┐
-│                     Supabase RPC                              │
-│  ┌─────────────────────┐    ┌─────────────────────────────┐  │
-│  │   pull_changes()    │    │      push_changes()         │  │
-│  │ - Returns updated   │    │ - MAX for counters          │  │
-│  │   records since     │    │ - LWW for state             │  │
-│  │   last sync         │    │ - Insert-only for sessions  │  │
-│  └─────────────────────┘    └─────────────────────────────┘  │
-└───────────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────────┐
+│                           React App                                  │
+│                                                                      │
+│  ┌─────────────────┐    ┌───────────────────────────────────────┐   │
+│  │  useDatabase()  │───▶│      WatermelonDB (IndexedDB)         │   │
+│  │     hook        │    │  Per-Child Data:      Global Data:    │   │
+│  └────────┬────────┘    │  - word_progress      - word_catalog  │   │
+│           │             │  - game_sessions                      │   │
+│  ┌────────┴────────┐    │  - statistics                         │   │
+│  │ useWordCatalog()│───▶│  - calibration                        │   │
+│  │     hook        │    │  - word_attempts                      │   │
+│  └────────┬────────┘    └──────────────┬────────────────────────┘   │
+│           │                            │                            │
+│           ▼                            ▼                            │
+│  ┌─────────────────────┐    ┌─────────────────┐                    │
+│  │ syncWordCatalog()   │    │ syncWithSupabase│                    │
+│  │ (syncWordCatalog.ts)│    │   (sync.ts)     │                    │
+│  └─────────┬───────────┘    └────────┬────────┘                    │
+└────────────┼─────────────────────────┼──────────────────────────────┘
+             │                         │
+             ▼                         ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                         Supabase RPC                                 │
+│  ┌───────────────────────┐  ┌─────────────────┐  ┌───────────────┐  │
+│  │  pull_word_catalog()  │  │  pull_changes() │  │ push_changes()│  │
+│  │  - System words       │  │  - Per-child    │  │ - MAX counters│  │
+│  │  - Parent custom words│  │  - Incremental  │  │ - LWW state   │  │
+│  │  - Pull-only          │  │                 │  │ - Insert-only │  │
+│  └───────────────────────┘  └─────────────────┘  └───────────────┘  │
+└─────────────────────────────────────────────────────────────────────┘
 ```
+
+### Two Sync Domains
+
+The app has **two separate sync flows**:
+
+| Sync Domain | Scope | Direction | Trigger |
+|-------------|-------|-----------|---------|
+| **Per-Child Data** | word_progress, game_sessions, statistics, calibration, word_attempts | Bidirectional (push + pull) | Auto on login, periodic, manual |
+| **Word Catalog** | word_catalog (system + custom words) | Pull-only | On login, after custom word creation, manual |
+
+This separation exists because:
+1. **Child data** is per-child and requires push/pull with conflict resolution
+2. **Word catalog** is global (shared across children) and read-only from client perspective
 
 ## Key Files
 
@@ -48,10 +66,13 @@ Alice Spelling Run uses **WatermelonDB** for offline-first local storage with **
 | `src/db/sync.ts` | Sync adapter with custom reconciliation |
 | `src/db/transforms.ts` | Data transformers (WatermelonDB ↔ Supabase) |
 | `src/db/syncDiagnostics.ts` | Sync health checking and deep repair |
+| `src/db/syncWordCatalog.ts` | Word catalog sync (pull-only, global) |
 | `src/db/hooks/useDatabase.ts` | React hook for database access |
+| `src/hooks/useWordCatalog.ts` | React hook for word catalog access with fallback |
 | `supabase/migrations/009_watermelon_sync.sql` | RPC function definitions |
 | `supabase/migrations/012_fix_push_changes_jsonb.sql` | JSON concatenation fix |
 | `supabase/migrations/018_get_record_keys.sql` | RPC for orphan detection |
+| `supabase/migrations/022_word_catalog_sync.sql` | RPC for word catalog sync |
 
 ## Sync Tables
 
@@ -140,6 +161,28 @@ Individual word attempt history (append-only, like game_sessions).
 
 See "Attempt History: Use word_attempts, Not JSONB" in Data Access Patterns section.
 
+### 6. word_catalog (Global - Not Per-Child)
+
+Local cache of system words and parent's custom words. **Pull-only sync**.
+
+| Field | Type | Notes |
+|-------|------|-------|
+| `word_text` | string | Display text |
+| `word_normalized` | string | Lowercase, no punctuation (for lookups) |
+| `definition` | string | Word definition |
+| `example_sentence` | string | Example usage (optional) |
+| `grade_level` | number | 3-6 |
+| `is_custom` | boolean | System word vs parent-created |
+| `created_by` | string | Parent ID for custom words (optional) |
+| `server_id` | string | Supabase word ID |
+| `server_updated_at` | number | For incremental sync |
+
+**Key Differences from Per-Child Tables**:
+- **Global**: Not filtered by child_id (shared across all children)
+- **Pull-only**: Client never pushes changes (custom words added via Supabase API)
+- **Separate sync**: Uses `syncWordCatalog()`, not `syncWithSupabase()`
+- **Fallback**: Falls back to bundled `GRADE_WORDS` files when empty
+
 ## Sync Flow
 
 ### Pull (Server → Local)
@@ -159,13 +202,56 @@ See "Attempt History: Use word_attempts, Not JSONB" in Data Access Patterns sect
 
 ```
 1. WatermelonDB collects ALL dirty records from database
-2. filterChangesByChildId() filters to current child only
-   ⚠️ CRITICAL: Without this, other children's data leaks
-3. transformPushChanges() converts to server format
-4. push_changes() RPC applies with conflict resolution:
+2. transformPushChanges() converts to server format (includes child_id per record)
+3. push_changes() RPC applies with conflict resolution:
+   - Each record's child_id is validated (parent must own child)
    - MAX for counters (never lose progress)
    - LWW for state (based on client_updated_at)
    - ON CONFLICT DO NOTHING for sessions
+```
+
+**NOTE**: Unlike earlier versions, we no longer filter by child_id on the client side.
+Each record carries its own child_id, and the RPC validates ownership and uses that
+child_id for inserts/updates. This allows syncing ALL children's data in one push.
+
+### Word Catalog Sync (Separate Flow)
+
+The word catalog uses a **separate sync flow** because it's global (not per-child) and pull-only.
+
+```
+1. syncWordCatalog(parentId) called (on login, after custom word creation, or manual)
+2. Check rate limiting (min 5 minutes between syncs)
+3. Call pull_word_catalog(p_parent_id, p_last_synced_at) RPC:
+   - Returns system words (is_custom = false)
+   - Returns parent's custom words (created_by = parentId)
+   - Returns deleted word IDs for removal
+4. Upsert words into local word_catalog table
+5. Delete any words marked as deleted on server
+6. Update localStorage timestamp for incremental sync
+```
+
+**Key Design Points**:
+
+| Aspect | Per-Child Sync | Word Catalog Sync |
+|--------|----------------|-------------------|
+| Scope | Per-child tables | Global word_catalog table |
+| Direction | Bidirectional | Pull-only |
+| RPC | pull_changes / push_changes | pull_word_catalog |
+| Reconciliation | By business key | By server_id |
+| Filtering | By child_id | By parent_id (for custom words) |
+| Fallback | None (sync required) | Bundled GRADE_WORDS files |
+
+**Fallback Behavior**:
+
+When the local `word_catalog` table is empty (first launch, offline), the app uses bundled word files:
+
+```typescript
+// In useWordCatalog hook
+const count = await wordCatalogCollection.query().fetchCount();
+if (count === 0) {
+  // Return from local GRADE_WORDS files as fallback
+  return getLocalFallbackWords();
+}
 ```
 
 ## Reconciliation Strategy
@@ -267,20 +353,22 @@ dbReq.onsuccess = () => {
 // Should show _status: "updated" and _changed: "field1,field2,..." for pending changes
 ```
 
-### Multi-Child Database Isolation
+### Multi-Child Database Architecture
 
-**Problem**: WatermelonDB's `synchronize()` operates on the ENTIRE database, not per-child. Without filtering, syncing Child B would push Child A's pending records.
+**Design**: WatermelonDB's `synchronize()` operates on the ENTIRE database, not per-child.
+Rather than filtering records client-side (which was error-prone), each record includes its
+own `child_id` and the RPC uses that value for inserts/updates.
 
-**Solution**: `filterChangesByChildId()` filters pushChanges before sending:
+**Security**: The RPC validates that the authenticated parent owns each record's `child_id`:
 
-```typescript
-pushChanges: async ({ changes }) => {
-  // Filter to only push records for this child
-  const filteredChanges = filterChangesByChildId(changes, childId);
-  const transformedChanges = transformPushChanges(filteredChanges);
-  // ...
-}
+```sql
+IF NOT EXISTS (SELECT 1 FROM children WHERE id = record_child_id AND parent_id = auth.uid()) THEN
+  RAISE EXCEPTION 'Unauthorized: cannot push data for child %', record_child_id;
+END IF;
 ```
+
+**Benefit**: This approach allows syncing all children's pending changes in a single push
+operation, regardless of which child triggered the sync.
 
 ### Transform Functions Must NOT Include Internal Fields
 
@@ -306,6 +394,24 @@ COALESCE(p_changes->'foo', '[]'::json) || COALESCE(p_changes->'bar', '[]'::json)
 COALESCE((p_changes->'foo')::jsonb, '[]'::jsonb) || COALESCE((p_changes->'bar')::jsonb, '[]'::jsonb)
 ```
 
+### Backfill Migration Timestamps
+
+When writing migrations that backfill historical data into synced tables, **set `created_at` to the actual event time, not `NOW()`**.
+
+**The Problem**: Incremental sync filters by timestamp (e.g., `WHERE created_at > p_last_pulled_at`). If a backfill migration runs and sets `created_at = NOW()`, but a user's `lastPulledAt` is already set to a time AFTER the migration ran, those backfilled records will never be pulled.
+
+```sql
+-- ❌ WRONG: Backfilled records may be older than lastPulledAt
+INSERT INTO child_word_attempts (..., created_at)
+VALUES (..., NOW());
+
+-- ✅ CORRECT: Use actual event time so records sync based on when they happened
+INSERT INTO child_word_attempts (..., created_at)
+VALUES (..., v_session.played_at);  -- or attempted_at, etc.
+```
+
+**If backfill already ran with `NOW()`**: Users need to use Deep Repair (which bypasses `lastPulledAt` by passing `null` timestamp) to pull all records.
+
 ## Debugging Sync Issues
 
 ### Console Logs
@@ -327,13 +433,17 @@ COALESCE((p_changes->'foo')::jsonb, '[]'::jsonb) || COALESCE((p_changes->'bar'):
 | `Migration syncs cannot be enabled...` | `migrationsEnabledAtVersion` set without migrations | Remove from `synchronize()` call |
 | `Invalid raw record... _status or _changed` | Transform adds internal fields | Remove `_status`/`_changed` from transforms |
 | `operator does not exist: json \|\| json` | Using `\|\|` on `json` type | Cast to `jsonb` before concatenation |
-| Child A's data appears in Child B | pushChanges sends all children's data | Ensure `filterChangesByChildId()` is called |
+| Child A's data appears in Child B | Old RPC uses p_child_id param instead of record's child_id | Apply migration 024_push_uses_record_child_id.sql |
 | Duplicate records after sync | Reconciliation not matching by business key | Check reconcile functions use correct key |
 | `gameHistory` always empty | Reading from `statistics.game_history_json` which is null | Query `game_sessions` table directly (see Data Access Patterns) |
 | Word detail shows "No attempts" despite practice | `attempt_history_json` JSONB field never synced | Data is in `word_attempts` table; run `migrateLocalAttemptHistory()` to salvage local JSONB data |
 | Local 0 records, Server has data, sync says "healthy" | `lastPulledAt` timestamp issue - sync only pulls changes since last sync | Use Deep Repair to force full pull with null timestamp |
 | Server data manually corrected but local unchanged | Normal sync uses LWW/MAX strategies, local may "win" | Use Deep Repair (server authority) to overwrite local |
 | Orphaned local records after server cleanup | Normal sync doesn't delete records missing from server | Use Deep Repair with orphan cleanup enabled |
+| Backfilled records not syncing (e.g., word_attempts) | Backfill migration set `created_at = NOW()` which is older than `lastPulledAt`, so incremental pull returns 0 | Use Deep Repair; for future backfills, set `created_at` to actual event time (e.g., `attempted_at`) |
+| Word catalog shows 0 local words | Catalog never synced or sync failed | Click "Sync Word Catalog" in sync panel; check console for RPC errors |
+| Custom words not appearing in catalog | Sync hasn't run since word was created | `insertCustomWord()` auto-triggers sync; manual sync if needed |
+| Word definitions missing during gameplay | Local catalog empty, using fallback files | Normal on first launch; definitions from GRADE_WORDS files used as fallback |
 
 ### Force Re-sync
 
@@ -363,11 +473,11 @@ The sync system includes diagnostics and repair features accessible via the clou
 
 ### Repair Options
 
-#### Quick Repair
-Standard bidirectional sync: pushes local changes, pulls server changes.
+#### Sync Now
+Performs an actual sync (push local, pull server) and reports the result. This replaced the old "Refresh" (read-only check) and "Quick Repair" (sync) buttons - now checking health always syncs first.
 
 ```typescript
-await healSync(); // or click "Quick Repair" button
+await checkSyncHealth(childId); // Syncs, then compares counts
 ```
 
 #### Deep Repair (Server Authority)
@@ -452,7 +562,8 @@ $$;
 | Manually deleted server records | Deep Repair removes local orphans |
 | Manually corrected mastery levels on server | Deep Repair overwrites local with server values |
 | Local data corrupted or stale | Deep Repair rebuilds from server |
-| Normal sync not working | Try Quick Repair first, then Deep Repair |
+| Backfilled data not syncing | Deep Repair bypasses `lastPulledAt` to pull all records |
+| Normal sync not working | Try Sync Now first, then Deep Repair |
 
 ### UI Access
 
@@ -462,10 +573,18 @@ The sync status indicator in the header provides access to repair functions:
 [Cloud Icon] → Click to open panel
   ├── Status badge (Healthy/Inconsistent/etc.)
   ├── Record counts (local / server)
-  ├── [Refresh] - Re-check health
-  ├── [Quick Repair] - Standard sync
+  │     - Words, Games, Stats, Attempts (per-child)
+  ├── Word Catalog section
+  │     - Cached count / Server count
+  │     - [Sync Word Catalog] button
+  ├── [Sync Now] - Sync and report health
   └── [Deep Repair (server authority)] - Full server refresh
 ```
+
+The Word Catalog section shows:
+- How many words are cached locally vs available on server
+- Warning if local cache is missing words
+- Manual sync button (bypasses rate limiting)
 
 ## Data Access Patterns
 
@@ -552,6 +671,59 @@ async function migrateLocalAttemptHistory(childId: string) {
 1. Sync automatically via standard table handling
 2. Use insert-only deduplication (ON CONFLICT DO NOTHING)
 3. Are queryable independently
+
+### Word Catalog: Use Local Cache with Fallback
+
+**Design Decision**: Word definitions are stored in Supabase `words` table and synced to local `word_catalog` table, with fallback to bundled TypeScript files.
+
+**Architecture**:
+
+```
+Supabase `words` table (source of truth, ~640 words)
+├── System words (is_custom=false)
+└── Parent custom words (is_custom=true, created_by=parent_id)
+         │
+         ▼ (pull_word_catalog RPC, pull-only)
+         │
+WatermelonDB `word_catalog` table (local cache)
+         │
+         ▼ (useWordCatalog hook)
+         │
+Components (with fallback to GRADE_WORDS files)
+```
+
+**Why This Design**:
+
+1. **Supabase as source of truth**: Definitions can be updated server-side without app updates
+2. **Offline support**: Local cache provides instant access without network
+3. **Graceful degradation**: Bundled files ensure app works on first launch before any sync
+4. **Custom words**: Parents can create custom words that sync to their children
+
+**Implementation**:
+
+```typescript
+// In components - use the hook
+const { words, findWord, getWordsForGrade, isFallback } = useWordCatalog();
+
+// The hook automatically:
+// 1. Subscribes to local word_catalog table
+// 2. Falls back to bundled GRADE_WORDS if table is empty
+// 3. Provides lookup functions (findWord, getWordsForGrade)
+```
+
+**Sync Triggers**:
+
+| Event | Action |
+|-------|--------|
+| User login | `syncWordCatalog(userId)` if stale (>24 hours) |
+| Custom word created | `syncWordCatalog(userId, forceFullSync=true)` |
+| Manual sync button | `syncWordCatalog(userId, forceFullSync=true)` |
+
+**Key Files**:
+- `src/db/syncWordCatalog.ts` - Sync logic
+- `src/hooks/useWordCatalog.ts` - React hook with fallback
+- `src/data/gradeWords/` - Bundled fallback files (~640 words)
+- `supabase/migrations/022_word_catalog_sync.sql` - RPC function
 
 ## Architecture Decisions
 

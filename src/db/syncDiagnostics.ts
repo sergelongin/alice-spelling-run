@@ -102,9 +102,12 @@ interface ServerRecordKeys {
 /**
  * Check the health of WatermelonDB sync for a specific child.
  * This function:
- * 1. Checks for unsynced local changes
- * 2. Compares local and server record counts
+ * 1. Actually performs a sync (push local, pull server)
+ * 2. Compares local and server record counts AFTER sync
  * 3. Returns a detailed health report
+ *
+ * By syncing first, this ensures "Check Sync Health" actually syncs data
+ * rather than just reporting stale counts.
  *
  * @param childId - The child ID to check sync health for
  * @returns SyncHealthReport with status and details
@@ -118,22 +121,31 @@ export async function checkSyncHealth(childId: string): Promise<SyncHealthReport
       status: 'offline',
       hasUnsyncedChanges: false,
       inconsistencyCount: 0,
-      details: 'Offline - cannot check sync health',
+      details: 'Offline - cannot sync',
       checkedAt,
     };
   }
 
+  // Step 1: Actually sync first (push local changes, pull server changes)
+  let syncError: Error | null = null;
   try {
-    // 1. Check for unsynced local changes
+    await syncWithSupabase(childId);
+  } catch (error) {
+    syncError = error instanceof Error ? error : new Error(String(error));
+    console.error('[SyncDiagnostics] Sync failed during health check:', syncError);
+  }
+
+  try {
+    // Step 2: Check for any remaining unsynced local changes
     const hasPending = await hasUnsyncedChanges({ database });
 
-    // 2. Get local record counts for this child
+    // Step 3: Get local record counts for this child (after sync)
     const localCounts = await getLocalCounts(childId);
 
-    // 3. Get server record counts for this child
+    // Step 4: Get server record counts for this child
     const serverCounts = await getServerCounts(childId);
 
-    // 4. Get last sync log from SyncLogger
+    // Step 5: Get last sync log from SyncLogger
     const logs = syncLogger.logs;
     const lastLog = logs[logs.length - 1];
     const lastSyncLog = lastLog
@@ -147,13 +159,13 @@ export async function checkSyncHealth(childId: string): Promise<SyncHealthReport
         }
       : undefined;
 
-    // 5. Determine sync health status
-    if (hasPending) {
+    // Step 6: If sync failed, return error status
+    if (syncError) {
       return {
-        status: 'has_unsynced',
-        hasUnsyncedChanges: true,
-        inconsistencyCount: 0,
-        details: 'Local changes pending - sync needed',
+        status: 'error',
+        hasUnsyncedChanges: hasPending,
+        inconsistencyCount: -1,
+        details: `Sync failed: ${syncError.message}`,
         checkedAt,
         localCounts,
         serverCounts,
@@ -161,38 +173,81 @@ export async function checkSyncHealth(childId: string): Promise<SyncHealthReport
       };
     }
 
-    // Check for count mismatches (simple inconsistency detection)
+    // Step 7: If there are still pending changes after sync, report it
+    if (hasPending) {
+      return {
+        status: 'has_unsynced',
+        hasUnsyncedChanges: true,
+        inconsistencyCount: 0,
+        details: 'Sync completed but local changes still pending',
+        checkedAt,
+        localCounts,
+        serverCounts,
+        lastSyncLog,
+      };
+    }
+
+    // Step 8: Check for bidirectional count mismatches AFTER sync
+    // If counts don't match after sync, something is wrong
     const inconsistencies: string[] = [];
+    const threshold = 2; // Tighter threshold since we just synced
 
-    // Note: We can't directly compare counts because:
-    // - Local may have more records (created but not synced)
-    // - Server may have more records (from other devices)
-    // For now, just flag if local has significantly more than server
-    // which could indicate push failures
+    // Local > server (push may have failed silently)
+    if (localCounts.wordProgress > serverCounts.wordProgress + threshold) {
+      inconsistencies.push(
+        `word_progress: ${localCounts.wordProgress} local vs ${serverCounts.wordProgress} server (local excess)`
+      );
+    }
+    // Server > local (pull may have failed)
+    if (serverCounts.wordProgress > localCounts.wordProgress + threshold) {
+      inconsistencies.push(
+        `word_progress: ${localCounts.wordProgress} local vs ${serverCounts.wordProgress} server (missing local)`
+      );
+    }
 
-    if (localCounts.wordProgress > serverCounts.wordProgress + 5) {
+    if (localCounts.gameSessions > serverCounts.gameSessions + threshold) {
       inconsistencies.push(
-        `word_progress: ${localCounts.wordProgress} local vs ${serverCounts.wordProgress} server`
+        `game_sessions: ${localCounts.gameSessions} local vs ${serverCounts.gameSessions} server (local excess)`
       );
     }
-    if (localCounts.gameSessions > serverCounts.gameSessions + 5) {
+    if (serverCounts.gameSessions > localCounts.gameSessions + threshold) {
       inconsistencies.push(
-        `game_sessions: ${localCounts.gameSessions} local vs ${serverCounts.gameSessions} server`
+        `game_sessions: ${localCounts.gameSessions} local vs ${serverCounts.gameSessions} server (missing local)`
       );
     }
-    if (localCounts.statistics > serverCounts.statistics + 2) {
+
+    if (localCounts.statistics > serverCounts.statistics + threshold) {
       inconsistencies.push(
-        `statistics: ${localCounts.statistics} local vs ${serverCounts.statistics} server`
+        `statistics: ${localCounts.statistics} local vs ${serverCounts.statistics} server (local excess)`
       );
     }
-    if (localCounts.calibration > serverCounts.calibration + 2) {
+    if (serverCounts.statistics > localCounts.statistics + threshold) {
       inconsistencies.push(
-        `calibration: ${localCounts.calibration} local vs ${serverCounts.calibration} server`
+        `statistics: ${localCounts.statistics} local vs ${serverCounts.statistics} server (missing local)`
       );
     }
-    if (localCounts.wordAttempts > serverCounts.wordAttempts + 10) {
+
+    if (localCounts.calibration > serverCounts.calibration + threshold) {
       inconsistencies.push(
-        `word_attempts: ${localCounts.wordAttempts} local vs ${serverCounts.wordAttempts} server`
+        `calibration: ${localCounts.calibration} local vs ${serverCounts.calibration} server (local excess)`
+      );
+    }
+    if (serverCounts.calibration > localCounts.calibration + threshold) {
+      inconsistencies.push(
+        `calibration: ${localCounts.calibration} local vs ${serverCounts.calibration} server (missing local)`
+      );
+    }
+
+    // Word attempts can have more variance due to volume
+    const attemptThreshold = 5;
+    if (localCounts.wordAttempts > serverCounts.wordAttempts + attemptThreshold) {
+      inconsistencies.push(
+        `word_attempts: ${localCounts.wordAttempts} local vs ${serverCounts.wordAttempts} server (local excess)`
+      );
+    }
+    if (serverCounts.wordAttempts > localCounts.wordAttempts + attemptThreshold) {
+      inconsistencies.push(
+        `word_attempts: ${localCounts.wordAttempts} local vs ${serverCounts.wordAttempts} server (missing local)`
       );
     }
 
@@ -201,7 +256,7 @@ export async function checkSyncHealth(childId: string): Promise<SyncHealthReport
         status: 'inconsistent',
         hasUnsyncedChanges: false,
         inconsistencyCount: inconsistencies.length,
-        details: `Potential sync issues:\n${inconsistencies.join('\n')}`,
+        details: `Sync completed but count mismatch detected:\n${inconsistencies.join('\n')}`,
         checkedAt,
         localCounts,
         serverCounts,
@@ -213,7 +268,7 @@ export async function checkSyncHealth(childId: string): Promise<SyncHealthReport
       status: 'healthy',
       hasUnsyncedChanges: false,
       inconsistencyCount: 0,
-      details: 'Sync is healthy',
+      details: 'Sync completed successfully',
       checkedAt,
       localCounts,
       serverCounts,
@@ -893,6 +948,65 @@ export async function getDetailedDiagnostics(childId: string): Promise<{
     syncLogs,
     localWordSample,
     serverWordSample: serverWords || [],
+  };
+}
+
+// =============================================================================
+// MULTI-CHILD HEALTH CHECK
+// =============================================================================
+
+/**
+ * Aggregated sync health report across all children
+ */
+export interface MultiChildSyncHealthReport {
+  overallStatus: SyncHealthStatus;
+  childReports: {
+    childId: string;
+    childName: string;
+    health: SyncHealthReport;
+  }[];
+  checkedAt: string;
+}
+
+/**
+ * Check sync health for all children.
+ * Returns aggregated status (worst status across all children) and individual reports.
+ *
+ * Status priority (worst to best): error > inconsistent > has_unsynced > healthy
+ *
+ * @param children - Array of child objects with id and name
+ * @returns Promise with aggregated health report
+ */
+export async function checkSyncHealthAllChildren(
+  children: { id: string; name: string }[]
+): Promise<MultiChildSyncHealthReport> {
+  const childReports: MultiChildSyncHealthReport['childReports'] = [];
+  let worstStatus: SyncHealthStatus = 'healthy';
+
+  console.log('[SyncDiagnostics] Checking health for', children.length, 'children');
+
+  for (const child of children) {
+    console.log(`[SyncDiagnostics] Checking health for child ${child.name}...`);
+    const health = await checkSyncHealth(child.id);
+    childReports.push({ childId: child.id, childName: child.name, health });
+
+    // Track worst status
+    if (health.status === 'error') {
+      worstStatus = 'error';
+    } else if (health.status === 'inconsistent' && worstStatus !== 'error') {
+      worstStatus = 'inconsistent';
+    } else if (health.status === 'has_unsynced' && worstStatus === 'healthy') {
+      worstStatus = 'has_unsynced';
+    }
+    // 'healthy' doesn't change worstStatus, 'offline' and 'checking' are transient
+  }
+
+  console.log(`[SyncDiagnostics] Multi-child health check complete. Overall status: ${worstStatus}`);
+
+  return {
+    overallStatus: worstStatus,
+    childReports,
+    checkedAt: new Date().toISOString(),
   };
 }
 

@@ -5,12 +5,10 @@ import { Button, WordDetailModal } from '../common';
 import { TodaysMissionCard } from './TodaysMissionCard';
 import { ProgressJourney } from './ProgressJourney';
 import { AchievementBadges } from './AchievementBadges';
-import { StarWordsShowcase } from './StarWordsShowcase';
 import { useGameContext } from '@/context/GameContextDB';
 import { useFreshGameData } from '@/hooks';
 import {
   calculateAchievements,
-  getRecentlyMasteredWords,
   getWordsDueCount,
 } from '@/types/achievements';
 import { categorizeWordsByState, canIntroduceNewWords } from '@/utils/wordSelection';
@@ -53,11 +51,6 @@ export function ChildWordBank() {
     [wordBank.words, statistics]
   );
 
-  const recentlyMastered = useMemo(() =>
-    getRecentlyMasteredWords(wordBank.words, 8),
-    [wordBank.words]
-  );
-
   // Show loading spinner while WatermelonDB subscriptions initialize
   // IMPORTANT: This early return is AFTER all hooks (per React rules of hooks)
   if (isLoading) {
@@ -68,9 +61,14 @@ export function ChildWordBank() {
     );
   }
 
-  const handlePractice = () => {
-    // Navigate to game with meadow mode (practice mode)
+  const handleChillPractice = () => {
+    // Navigate to game with meadow mode (chill practice)
     navigate('/game', { state: { mode: 'meadow' } });
+  };
+
+  const handleChaseMode = () => {
+    // Navigate to game with savannah mode (chase mode with trophies)
+    navigate('/game', { state: { mode: 'savannah' } });
   };
 
   const handleWordClick = (word: Word) => {
@@ -86,67 +84,44 @@ export function ChildWordBank() {
         </h1>
       </div>
 
-      {/* Two-column layout */}
-      <div className="flex flex-col md:flex-row gap-6">
-        {/* Main content - left side */}
-        <div className="flex-1 space-y-6">
-          {/* Today's Mission Card */}
-          <TodaysMissionCard
-            dueWordCount={dueWordCount}
-            canIntroduceNew={canIntroduce}
-            masteredCount={wordStates.mastered.length}
-            totalActiveWords={activeWords.length}
-            onPractice={handlePractice}
-          />
-
-          {/* Achievement Badges - mobile only */}
-          <div className="md:hidden">
-            <AchievementBadges achievements={achievements} />
-          </div>
-
-          {/* Progress Journey */}
-          <ProgressJourney
-            words={wordBank.words}
-            onWordClick={handleWordClick}
-          />
-
-          {/* Star Words Showcase - mobile only */}
-          {recentlyMastered.length > 0 && (
-            <div className="md:hidden">
-              <StarWordsShowcase words={recentlyMastered} />
-            </div>
-          )}
-
-          {/* Empty state */}
-          {activeWords.length === 0 && (
-            <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 text-center">
-              <div className="text-5xl mb-4">📚</div>
-              <h3 className="text-lg font-bold text-gray-800 mb-2">No words yet!</h3>
-              <p className="text-gray-500 mb-4">
-                Ask a parent to add some words for you to practice.
-              </p>
-              <Button
-                onClick={() => navigate('/parent-dashboard')}
-                variant="primary"
-                className="inline-flex items-center gap-2"
-              >
-                <Users size={18} />
-                Go to Parent Dashboard
-              </Button>
-            </div>
-          )}
-        </div>
-
-        {/* Sidebar - desktop only */}
-        <aside className="hidden md:block w-72 flex-shrink-0">
-          <div className="sticky top-8 space-y-6">
-            <AchievementBadges achievements={achievements} variant="compact" />
-            {recentlyMastered.length > 0 && (
-              <StarWordsShowcase words={recentlyMastered} variant="sidebar" />
-            )}
-          </div>
-        </aside>
+      {/* Top row: Mission + Achievements side-by-side on desktop */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-6">
+        <TodaysMissionCard
+          dueWordCount={dueWordCount}
+          canIntroduceNew={canIntroduce}
+          masteredCount={wordStates.mastered.length}
+          totalActiveWords={activeWords.length}
+          onChillPractice={handleChillPractice}
+          onChaseMode={handleChaseMode}
+          className="h-full"
+        />
+        <AchievementBadges achievements={achievements} className="h-full" />
       </div>
+
+      {/* Full-width Progress Journey (includes Coming Soon) */}
+      <ProgressJourney
+        words={wordBank.words}
+        onWordClick={handleWordClick}
+      />
+
+      {/* Empty state */}
+      {activeWords.length === 0 && (
+        <div className="bg-white rounded-xl p-8 shadow-sm border border-gray-100 text-center mt-6">
+          <div className="text-5xl mb-4">📚</div>
+          <h3 className="text-lg font-bold text-gray-800 mb-2">No words yet!</h3>
+          <p className="text-gray-500 mb-4">
+            Ask a parent to add some words for you to practice.
+          </p>
+          <Button
+            onClick={() => navigate('/parent-dashboard')}
+            variant="primary"
+            className="inline-flex items-center gap-2"
+          >
+            <Users size={18} />
+            Go to Parent Dashboard
+          </Button>
+        </div>
+      )}
 
       {/* Word detail modal */}
       <WordDetailModal

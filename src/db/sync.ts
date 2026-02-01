@@ -18,14 +18,17 @@ import {
   transformStatisticsFromServer,
   transformCalibrationFromServer,
   transformWordAttemptFromServer,
+  transformLearningProgressFromServer,
+  transformGradeProgressFromServer,
   transformPushChanges,
   type ServerPullResponse,
   type SyncChangeset,
   type SyncTableChanges,
 } from './transforms';
-import type { WordAttemptModel } from './models';
+import type { WordAttemptModel, LearningProgress, GradeProgress } from './models';
 import type { WordProgress, GameSession, Statistics, Calibration } from './models';
 import { resetWatermelonDBForChild } from './resetChild';
+import { getLastPulledAt, setLastPulledAt, clearLastPulledAt } from './syncTimestamps';
 
 // Sync configuration
 const SYNC_CONFIG = {
@@ -44,57 +47,6 @@ const syncLogger = new SyncLogger(20);
 
 // Generic type for raw records
 type RawRecord = Record<string, unknown>;
-
-/**
- * Filter sync changes to only include records for a specific child.
- *
- * CRITICAL: WatermelonDB's synchronize() operates on the ENTIRE database,
- * not per-child. Without this filter, syncing child B would push child A's
- * pending records to the server under child B's ID, causing data corruption.
- */
-function filterChangesByChildId(changes: SyncChangeset, childId: string): SyncChangeset {
-  const filterRecords = (records: RawRecord[]): RawRecord[] => {
-    return records.filter(record => record['child_id'] === childId);
-  };
-
-  return {
-    word_progress: {
-      created: filterRecords(changes.word_progress.created),
-      updated: filterRecords(changes.word_progress.updated),
-      deleted: changes.word_progress.deleted, // Deletes are IDs only, server handles filtering
-    },
-    game_sessions: {
-      created: filterRecords(changes.game_sessions.created),
-      updated: filterRecords(changes.game_sessions.updated),
-      deleted: changes.game_sessions.deleted,
-    },
-    statistics: {
-      created: filterRecords(changes.statistics.created),
-      updated: filterRecords(changes.statistics.updated),
-      deleted: changes.statistics.deleted,
-    },
-    calibration: {
-      created: filterRecords(changes.calibration.created),
-      updated: filterRecords(changes.calibration.updated),
-      deleted: changes.calibration.deleted,
-    },
-    learning_progress: {
-      created: filterRecords(changes.learning_progress.created),
-      updated: filterRecords(changes.learning_progress.updated),
-      deleted: changes.learning_progress.deleted,
-    },
-    word_bank_metadata: {
-      created: filterRecords(changes.word_bank_metadata.created),
-      updated: filterRecords(changes.word_bank_metadata.updated),
-      deleted: changes.word_bank_metadata.deleted,
-    },
-    word_attempts: {
-      created: filterRecords(changes.word_attempts.created),
-      updated: filterRecords(changes.word_attempts.updated),
-      deleted: changes.word_attempts.deleted,
-    },
-  };
-}
 
 /**
  * Reconcile server pull data with local records by business key.
@@ -136,12 +88,25 @@ async function reconcilePullChanges(
   // ==========================================================================
   const wordAttemptsChanges = await reconcileWordAttempts(serverData, childId);
 
+  // ==========================================================================
+  // LEARNING PROGRESS: Reconcile by (child_id)
+  // Single record per child for global lifetime points
+  // ==========================================================================
+  const learningProgressChanges = await reconcileLearningProgress(serverData, childId);
+
+  // ==========================================================================
+  // GRADE PROGRESS: Reconcile by (child_id, grade_level)
+  // One record per child per grade level
+  // ==========================================================================
+  const gradeProgressChanges = await reconcileGradeProgress(serverData, childId);
+
   return {
     word_progress: wordProgressChanges,
     game_sessions: gameSessionChanges,
     statistics: statisticsChanges,
     calibration: calibrationChanges,
-    learning_progress: { created: [], updated: [], deleted: [] },
+    learning_progress: learningProgressChanges,
+    grade_progress: gradeProgressChanges,
     word_bank_metadata: { created: [], updated: [], deleted: [] },
     word_attempts: wordAttemptsChanges,
   };
@@ -368,6 +333,94 @@ async function reconcileWordAttempts(
 }
 
 /**
+ * Reconcile learning_progress by child_id.
+ * Single record per child for global lifetime points.
+ */
+async function reconcileLearningProgress(
+  serverData: ServerPullResponse,
+  childId: string
+): Promise<SyncTableChanges> {
+  if (!serverData.learning_progress?.length) {
+    return { created: [], updated: [], deleted: [] };
+  }
+
+  // Query local record (should be at most one per child)
+  const localRecords = await database
+    .get<LearningProgress>('learning_progress')
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  const localRecord = localRecords[0] || null;
+
+  const created: RawRecord[] = [];
+  const updated: RawRecord[] = [];
+
+  for (const serverRecord of serverData.learning_progress) {
+    if (localRecord) {
+      // Local record exists - put in "updated" with LOCAL id
+      const transformed = transformLearningProgressFromServer(serverRecord);
+      updated.push({
+        ...transformed,
+        id: localRecord.id,
+      });
+    } else {
+      // No local match - put in "created"
+      created.push(transformLearningProgressFromServer(serverRecord));
+    }
+  }
+
+  console.log(`[Sync] learning_progress reconciled: ${created.length} created, ${updated.length} updated`);
+  return { created, updated, deleted: [] };
+}
+
+/**
+ * Reconcile grade_progress by (child_id, grade_level).
+ * One record per child per grade level.
+ */
+async function reconcileGradeProgress(
+  serverData: ServerPullResponse,
+  childId: string
+): Promise<SyncTableChanges> {
+  if (!serverData.grade_progress?.length) {
+    return { created: [], updated: [], deleted: [] };
+  }
+
+  // Query local records to build lookup map by grade_level
+  const localRecords = await database
+    .get<GradeProgress>('grade_progress')
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  const localByGradeLevel = new Map<number, GradeProgress>();
+  for (const record of localRecords) {
+    localByGradeLevel.set(record.gradeLevel, record);
+  }
+
+  const created: RawRecord[] = [];
+  const updated: RawRecord[] = [];
+
+  for (const serverRecord of serverData.grade_progress) {
+    const gradeLevel = serverRecord.grade_level;
+    const localMatch = localByGradeLevel.get(gradeLevel);
+
+    if (localMatch) {
+      // Local record exists - put in "updated" with LOCAL id
+      const transformed = transformGradeProgressFromServer(serverRecord);
+      updated.push({
+        ...transformed,
+        id: localMatch.id,
+      });
+    } else {
+      // No local match - put in "created"
+      created.push(transformGradeProgressFromServer(serverRecord));
+    }
+  }
+
+  console.log(`[Sync] grade_progress reconciled: ${created.length} created, ${updated.length} updated`);
+  return { created, updated, deleted: [] };
+}
+
+/**
  * Sync local WatermelonDB with Supabase
  * @param childId - The child ID to sync data for
  * @returns Promise that resolves when sync is complete
@@ -381,7 +434,11 @@ export async function syncWithSupabase(childId: string): Promise<void> {
   }
   lastSyncTime = now;
 
-  console.log('[Sync] Starting sync for child:', childId);
+  // Get per-child lastPulledAt (null = first sync, will pull everything)
+  // This overrides WatermelonDB's global timestamp to fix multi-child sync issues
+  const perChildLastPulledAt = getLastPulledAt(childId);
+
+  console.log('[Sync] Starting sync for child:', childId, 'perChildLastPulledAt:', perChildLastPulledAt);
 
   // Check for pending changes BEFORE sync
   const hasPending = await hasUnsyncedChanges({ database });
@@ -394,11 +451,15 @@ export async function syncWithSupabase(childId: string): Promise<void> {
     await synchronize({
       database,
       log, // Pass logger to capture sync details
-      pullChanges: async ({ lastPulledAt }) => {
-        console.log('[Sync] Pulling changes since:', lastPulledAt);
+      pullChanges: async ({ lastPulledAt: _wmLastPulledAt }) => {
+        // OVERRIDE WatermelonDB's global timestamp with per-child timestamp
+        // This fixes the bug where switching children uses the wrong timestamp
+        const effectiveTimestamp = perChildLastPulledAt;
 
-        const timestamp = lastPulledAt
-          ? new Date(lastPulledAt).toISOString()
+        console.log('[Sync] Pulling changes since:', effectiveTimestamp, '(WM global was:', _wmLastPulledAt, ')');
+
+        const timestamp = effectiveTimestamp
+          ? new Date(effectiveTimestamp).toISOString()
           : null;
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -426,32 +487,32 @@ export async function syncWithSupabase(childId: string): Promise<void> {
 
         // Check if server reset occurred since last sync
         // If reset happened more recently than our last sync, we need to clear local data
-        if (serverData.last_reset_at) {
+        // IMPORTANT: Only check for reset if we had a previous sync timestamp.
+        // On first sync (effectiveTimestamp=null), we should NOT trigger reset detection
+        // even if last_reset_at exists from a previous device's reset.
+        if (serverData.last_reset_at && effectiveTimestamp) {
           const resetTime = new Date(serverData.last_reset_at).getTime();
-          if (!lastPulledAt || resetTime > lastPulledAt) {
+          if (resetTime > effectiveTimestamp) {
             console.log('[Sync] Reset detected! Clearing local data...', {
               resetTime: serverData.last_reset_at,
-              lastPulledAt: lastPulledAt ? new Date(lastPulledAt).toISOString() : null,
+              effectiveTimestamp: new Date(effectiveTimestamp).toISOString(),
             });
             const deletedCounts = await resetWatermelonDBForChild(childId);
             console.log('[Sync] Local data cleared:', deletedCounts);
-            // Return empty changes - server has no data after reset
-            const emptyChangeset: SyncChangeset = {
-              word_progress: { created: [], updated: [], deleted: [] },
-              game_sessions: { created: [], updated: [], deleted: [] },
-              statistics: { created: [], updated: [], deleted: [] },
-              calibration: { created: [], updated: [], deleted: [] },
-              learning_progress: { created: [], updated: [], deleted: [] },
-              word_bank_metadata: { created: [], updated: [], deleted: [] },
-              word_attempts: { created: [], updated: [], deleted: [] },
-            };
-            return { changes: emptyChangeset, timestamp: serverTimestamp };
+            // Clear the per-child timestamp so next sync does a full pull
+            clearLastPulledAt(childId);
+            // DON'T return empty changeset - fall through to apply server data
+            // After clearing local data, we still need to populate from server
           }
         }
 
         // Reconcile by business key to prevent duplicates
         // Client and server have different UUIDs, so we match by business key instead
         const changes = await reconcilePullChanges(serverData, childId);
+
+        // Save per-child timestamp for next sync
+        // This is the key fix for multi-child sync - each child tracks its own timestamp
+        setLastPulledAt(childId, serverTimestamp);
 
         return {
           changes,
@@ -460,40 +521,51 @@ export async function syncWithSupabase(childId: string): Promise<void> {
       },
 
       pushChanges: async ({ changes }) => {
-        // CRITICAL: Filter to only push records belonging to this child.
-        // WatermelonDB sync operates on the entire database, so without this filter,
-        // syncing child B would push child A's pending records under child B's ID.
-        const filteredChanges = filterChangesByChildId(changes as SyncChangeset, childId);
+        // Push ALL pending records from ALL children.
+        // Each record carries its own child_id which the RPC will use.
+        // The RPC validates parent ownership of each child_id.
+        // No client-side filtering needed - this fixes the bug where filter removed valid records.
+        const allChanges = changes as SyncChangeset;
 
         // Log detailed push payload counts for debugging
         const pushCounts = {
           word_progress: {
-            created: filteredChanges.word_progress.created.length,
-            updated: filteredChanges.word_progress.updated.length,
-            deleted: filteredChanges.word_progress.deleted.length,
+            created: allChanges.word_progress.created.length,
+            updated: allChanges.word_progress.updated.length,
+            deleted: allChanges.word_progress.deleted.length,
           },
           game_sessions: {
-            created: filteredChanges.game_sessions.created.length,
-            updated: filteredChanges.game_sessions.updated.length,
-            deleted: filteredChanges.game_sessions.deleted.length,
+            created: allChanges.game_sessions.created.length,
+            updated: allChanges.game_sessions.updated.length,
+            deleted: allChanges.game_sessions.deleted.length,
           },
           statistics: {
-            created: filteredChanges.statistics.created.length,
-            updated: filteredChanges.statistics.updated.length,
-            deleted: filteredChanges.statistics.deleted.length,
+            created: allChanges.statistics.created.length,
+            updated: allChanges.statistics.updated.length,
+            deleted: allChanges.statistics.deleted.length,
           },
           calibration: {
-            created: filteredChanges.calibration.created.length,
-            updated: filteredChanges.calibration.updated.length,
-            deleted: filteredChanges.calibration.deleted.length,
+            created: allChanges.calibration.created.length,
+            updated: allChanges.calibration.updated.length,
+            deleted: allChanges.calibration.deleted.length,
           },
           word_attempts: {
-            created: filteredChanges.word_attempts.created.length,
-            updated: filteredChanges.word_attempts.updated.length,
-            deleted: filteredChanges.word_attempts.deleted.length,
+            created: allChanges.word_attempts.created.length,
+            updated: allChanges.word_attempts.updated.length,
+            deleted: allChanges.word_attempts.deleted.length,
+          },
+          learning_progress: {
+            created: allChanges.learning_progress.created.length,
+            updated: allChanges.learning_progress.updated.length,
+            deleted: allChanges.learning_progress.deleted.length,
+          },
+          grade_progress: {
+            created: allChanges.grade_progress.created.length,
+            updated: allChanges.grade_progress.updated.length,
+            deleted: allChanges.grade_progress.deleted.length,
           },
         };
-        console.log('[Sync] Pushing changes:', pushCounts);
+        console.log('[Sync] Pushing ALL children changes:', pushCounts);
 
         // If all counts are 0, log a warning for investigation
         const totalChanges = Object.values(pushCounts).reduce(
@@ -504,7 +576,7 @@ export async function syncWithSupabase(childId: string): Promise<void> {
           console.log('[Sync] Warning: No changes to push (all counts are 0)');
         }
 
-        const transformedChanges = transformPushChanges(filteredChanges);
+        const transformedChanges = transformPushChanges(allChanges);
 
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const { data, error } = await (supabase.rpc as any)('push_changes', {
@@ -558,6 +630,65 @@ export async function resetSyncState(): Promise<void> {
   // WatermelonDB handles this internally
   // Just reset the lastPulledAt in sync state
   console.log('[Sync] Sync state reset - next sync will be a full sync');
+}
+
+// =============================================================================
+// MULTI-CHILD SYNC
+// =============================================================================
+
+/**
+ * Result of syncing multiple children
+ */
+export interface MultiChildSyncResult {
+  success: boolean;
+  results: {
+    childId: string;
+    childName: string;
+    status: 'success' | 'error';
+    error?: string;
+  }[];
+  syncedAt: string;
+}
+
+/**
+ * Sync all children for a parent in sequence.
+ * This ensures each child's data is properly synced using their per-child timestamps.
+ *
+ * @param children - Array of child objects with id and name
+ * @returns Promise with sync results for each child
+ */
+export async function syncAllChildren(
+  children: { id: string; name: string }[]
+): Promise<MultiChildSyncResult> {
+  const results: MultiChildSyncResult['results'] = [];
+
+  console.log('[Sync] Starting multi-child sync for', children.length, 'children');
+
+  for (const child of children) {
+    try {
+      console.log(`[Sync] Syncing child ${child.name} (${child.id})...`);
+      await syncWithSupabase(child.id);
+      results.push({ childId: child.id, childName: child.name, status: 'success' });
+      console.log(`[Sync] Child ${child.name} synced successfully`);
+    } catch (err) {
+      console.error(`[Sync] Failed to sync child ${child.name}:`, err);
+      results.push({
+        childId: child.id,
+        childName: child.name,
+        status: 'error',
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  const successCount = results.filter(r => r.status === 'success').length;
+  console.log(`[Sync] Multi-child sync complete: ${successCount}/${children.length} succeeded`);
+
+  return {
+    success: results.every(r => r.status === 'success'),
+    results,
+    syncedAt: new Date().toISOString(),
+  };
 }
 
 // Export for external access to sync diagnostics

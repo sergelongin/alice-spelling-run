@@ -6,7 +6,7 @@
 import { appSchema, tableSchema } from '@nozbe/watermelondb';
 
 export const schema = appSchema({
-  version: 2,
+  version: 4,
   tables: [
     // Word progress tracks per-word mastery state
     tableSchema({
@@ -97,16 +97,37 @@ export const schema = appSchema({
       ],
     }),
 
-    // Learning progress for level map
+    // Learning progress for level map (global lifetime points)
     tableSchema({
       name: 'learning_progress',
       columns: [
         { name: 'child_id', type: 'string', isIndexed: true },
-        { name: 'total_points', type: 'number' },
+        { name: 'total_points', type: 'number' }, // Legacy field, renamed to total_lifetime_points in sync
+        { name: 'total_lifetime_points', type: 'number' }, // Global lifetime points for sync
         { name: 'current_milestone_index', type: 'number' },
         { name: 'milestone_progress', type: 'number' },
         // Point history stored as JSON
         { name: 'point_history_json', type: 'string', isOptional: true },
+        // Sync timestamp for LWW conflict resolution
+        { name: 'client_updated_at', type: 'number', isOptional: true },
+        // Server sync tracking
+        { name: 'server_id', type: 'string', isOptional: true },
+      ],
+    }),
+
+    // Grade progress for per-grade level map (one row per child per grade)
+    tableSchema({
+      name: 'grade_progress',
+      columns: [
+        { name: 'child_id', type: 'string', isIndexed: true },
+        { name: 'grade_level', type: 'number', isIndexed: true },
+        { name: 'total_points', type: 'number' },
+        { name: 'current_milestone_index', type: 'number' },
+        { name: 'words_mastered', type: 'number' },
+        { name: 'first_point_at', type: 'number', isOptional: true },
+        { name: 'last_activity_at', type: 'number', isOptional: true },
+        // Sync timestamp for LWW conflict resolution
+        { name: 'client_updated_at', type: 'number', isOptional: true },
         // Server sync tracking
         { name: 'server_id', type: 'string', isOptional: true },
       ],
@@ -142,6 +163,23 @@ export const schema = appSchema({
         { name: 'server_id', type: 'string', isOptional: true },
       ],
     }),
+
+    // Word catalog - local cache of system words and parent custom words
+    // Pull-only sync from Supabase, separate from per-child sync
+    tableSchema({
+      name: 'word_catalog',
+      columns: [
+        { name: 'word_text', type: 'string', isIndexed: true },
+        { name: 'word_normalized', type: 'string', isIndexed: true },
+        { name: 'definition', type: 'string' },
+        { name: 'example_sentence', type: 'string', isOptional: true },
+        { name: 'grade_level', type: 'number', isIndexed: true },
+        { name: 'is_custom', type: 'boolean' },
+        { name: 'created_by', type: 'string', isOptional: true }, // parent_id for custom words
+        { name: 'server_id', type: 'string', isIndexed: true }, // Supabase word ID
+        { name: 'server_updated_at', type: 'number' }, // For incremental sync
+      ],
+    }),
   ],
 });
 
@@ -152,8 +190,10 @@ export const TableName = {
   STATISTICS: 'statistics',
   CALIBRATION: 'calibration',
   LEARNING_PROGRESS: 'learning_progress',
+  GRADE_PROGRESS: 'grade_progress',
   WORD_BANK_METADATA: 'word_bank_metadata',
   WORD_ATTEMPTS: 'word_attempts',
+  WORD_CATALOG: 'word_catalog',
 } as const;
 
 export type TableNameType = (typeof TableName)[keyof typeof TableName];

@@ -9,7 +9,7 @@
 import { useState, useEffect, useMemo } from 'react';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '@/db';
-import type { WordProgress, GameSession, Statistics } from '@/db/models';
+import type { WordProgress, GameSession, Statistics, WordAttemptModel } from '@/db/models';
 import type {
   Word,
   WordBank,
@@ -18,6 +18,7 @@ import type {
   TrophyTier,
   StatsModeId,
   GameResult,
+  WordAttempt,
 } from '@/types';
 
 // =============================================================================
@@ -154,10 +155,45 @@ export function getStrugglingWordsList(wordBank: WordBank): string[] {
 }
 
 // =============================================================================
+// HELPER: Build Attempts Map from word_attempts table
+// =============================================================================
+
+/**
+ * Build a map of word_text -> WordAttempt[] from attempt records
+ * This mirrors the implementation in useDatabase.ts
+ */
+function buildAttemptsMap(attempts: WordAttemptModel[]): Map<string, WordAttempt[]> {
+  const map = new Map<string, WordAttempt[]>();
+  for (const attempt of attempts) {
+    const key = attempt.wordText.toLowerCase();
+    if (!map.has(key)) {
+      map.set(key, []);
+    }
+    map.get(key)!.push({
+      id: attempt.clientAttemptId,
+      timestamp: attempt.attemptedAt,
+      wasCorrect: attempt.wasCorrect,
+      typedText: attempt.typedText,
+      mode: attempt.mode,
+      timeMs: attempt.timeMs,
+      attemptNumber: attempt.attemptNumber,
+    });
+  }
+  // Sort each word's attempts by timestamp descending (most recent first)
+  for (const [, wordAttempts] of map) {
+    wordAttempts.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime());
+  }
+  return map;
+}
+
+// =============================================================================
 // MODEL CONVERTERS
 // =============================================================================
 
-function wordProgressToWord(wp: WordProgress): Word {
+function wordProgressToWord(wp: WordProgress, attemptsMap?: Map<string, WordAttempt[]>): Word {
+  // Get attempts from the new normalized table if available, otherwise fall back to JSONB field
+  const attempts = attemptsMap?.get(wp.wordText.toLowerCase()) || wp.attemptHistory || [];
+
   return {
     id: wp.id,
     text: wp.wordText,
@@ -172,7 +208,7 @@ function wordProgressToWord(wp: WordProgress): Word {
     lastMasteredCheckAt: null,
     definition: wp.definition,
     exampleSentence: wp.exampleSentence,
-    attemptHistory: wp.attemptHistory || [],
+    attemptHistory: attempts,
     isActive: wp.isActive,
     archivedAt: wp.archivedAt,
   };
@@ -347,6 +383,7 @@ export function useChildData(childId: string): UseChildDataResult {
   const [wordProgressRecords, setWordProgressRecords] = useState<WordProgress[]>([]);
   const [statisticsRecords, setStatisticsRecords] = useState<Statistics[]>([]);
   const [gameSessionRecords, setGameSessionRecords] = useState<GameSession[]>([]);
+  const [wordAttemptRecords, setWordAttemptRecords] = useState<WordAttemptModel[]>([]);
 
   // Subscribe to data changes for this child
   useEffect(() => {
@@ -362,6 +399,7 @@ export function useChildData(childId: string): UseChildDataResult {
     const wordProgressCollection = database.get<WordProgress>('word_progress');
     const statisticsCollection = database.get<Statistics>('statistics');
     const gameSessionCollection = database.get<GameSession>('game_sessions');
+    const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
     // Word Progress subscription
     const wpSubscription = wordProgressCollection
@@ -390,10 +428,20 @@ export function useChildData(childId: string): UseChildDataResult {
       .subscribe(records => {
         console.log('[useChildData] game_sessions update:', records.length, 'records');
         setGameSessionRecords(records);
-        // Mark loading as done after first data fetch
-        setIsLoading(false);
       });
     subscriptions.push(gsSubscription);
+
+    // Word Attempts subscription (for attemptHistory data)
+    const waSubscription = wordAttemptCollection
+      .query(Q.where('child_id', childId), Q.sortBy('attempted_at', Q.desc))
+      .observe()
+      .subscribe(records => {
+        console.log('[useChildData] word_attempts update:', records.length, 'records');
+        setWordAttemptRecords(records);
+        // Mark loading as done after all subscriptions have data
+        setIsLoading(false);
+      });
+    subscriptions.push(waSubscription);
 
     return () => {
       for (const sub of subscriptions) {
@@ -405,13 +453,15 @@ export function useChildData(childId: string): UseChildDataResult {
   // Convert WatermelonDB records to app types
   const wordBank: WordBank = useMemo(() => {
     if (!childId) return initialWordBank;
+    // Build attempts map from word_attempts table
+    const attemptsMap = buildAttemptsMap(wordAttemptRecords);
     return {
-      words: wordProgressRecords.map(wordProgressToWord),
+      words: wordProgressRecords.map(wp => wordProgressToWord(wp, attemptsMap)),
       lastUpdated: new Date().toISOString(),
       lastNewWordDate: null,
       newWordsIntroducedToday: 0,
     };
-  }, [childId, wordProgressRecords]);
+  }, [childId, wordProgressRecords, wordAttemptRecords]);
 
   const statistics: GameStatistics = useMemo(
     () => statisticsToGameStatistics(statisticsRecords, gameSessionRecords),

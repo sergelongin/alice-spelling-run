@@ -50,6 +50,9 @@ export interface AuthContextValue extends AuthState {
   signIn: (data: SignInData) => Promise<{ error: string | null }>;
   signOut: () => Promise<void>;
 
+  // Pre-sync callback registration (for GameProvider to register sync before logout/child-switch)
+  registerPreSyncCallback: (callback: () => Promise<void>) => void;
+
   // Profile actions
   updateProfile: (data: Partial<Pick<Profile, 'display_name'>>) => Promise<{ error: string | null }>;
 

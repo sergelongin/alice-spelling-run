@@ -5,6 +5,7 @@ import { grade6Words, grade6WordStrings } from './grade6';
 import { WordDefinition } from './types';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { Word } from '@/types/database';
+import { syncWordCatalog } from '@/db/syncWordCatalog';
 
 export { grade3Words, grade4Words, grade5Words, grade6Words };
 export { grade3WordStrings, grade4WordStrings, grade5WordStrings, grade6WordStrings };
@@ -329,6 +330,12 @@ export async function insertCustomWord(
 
   // Invalidate cache so the new word appears
   invalidateWordCache();
+
+  // Trigger word catalog sync to update local WatermelonDB cache
+  // This is non-blocking (fire and forget)
+  syncWordCatalog(userId, true).catch(err => {
+    console.warn('[GradeWords] Word catalog sync after insert failed:', err);
+  });
 
   return {
     word: {

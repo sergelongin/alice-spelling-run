@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '../index';
 import { syncWithSupabase } from '../sync';
+import { getLastPulledAt } from '../syncTimestamps';
 import { migrateChildData, isMigrationComplete, hasLocalStorageData } from '../migration/localStorage-to-watermelon';
 import {
   checkSyncHealth as checkSyncHealthFn,
@@ -15,7 +16,7 @@ import {
   type SyncHealthStatus,
   type HealOptions,
 } from '../syncDiagnostics';
-import type { WordProgress, GameSession, Statistics, Calibration, LearningProgress as LearningProgressModel, WordBankMetadata, WordAttemptModel } from '../models';
+import type { WordProgress, GameSession, Statistics, Calibration, LearningProgress as LearningProgressModel, GradeProgress as GradeProgressModel, WordBankMetadata, WordAttemptModel } from '../models';
 import type {
   Word,
   WordBank,
@@ -31,8 +32,10 @@ import type {
   TrophyTier,
   MasteryLevel,
   PointEvent,
+  GradeProgressData,
 } from '@/types';
 import { calculateSessionPoints } from '@/utils/levelMapUtils';
+import { GRADE_WORDS, type GradeLevel } from '@/data/gradeWords';
 
 // =============================================================================
 // TYPES
@@ -43,6 +46,10 @@ export interface UseDatabaseResult {
   isLoading: boolean;
   isMigrating: boolean;
   error: string | null;
+
+  // Initial sync state (for new devices)
+  needsInitialSync: boolean;
+  initialSyncCompleted: boolean;
 
   // Word Bank
   wordBank: WordBank;
@@ -61,8 +68,11 @@ export interface UseDatabaseResult {
   recordGame: (result: GameResult) => Promise<void>;
   clearHistory: () => Promise<void>;
 
-  // Learning Progress
+  // Learning Progress (global lifetime)
   learningProgress: LearningProgress;
+
+  // Grade Progress (per-grade)
+  gradeProgress: Map<GradeLevel, GradeProgressData>;
 
   // Calibration
   calibration: StoredCalibration;
@@ -85,8 +95,30 @@ export interface UseDatabaseResult {
     wordBank: WordBank;
     statistics: GameStatistics;
     learningProgress: LearningProgress;
+    gradeProgress: Map<GradeLevel, GradeProgressData>;
     hasCompletedCalibration: boolean;
   }>;
+}
+
+// =============================================================================
+// HELPER: Grade Level Lookup
+// =============================================================================
+
+// Build a reverse lookup map from word text to grade level
+const wordToGradeMap = new Map<string, GradeLevel>();
+for (const grade of [3, 4, 5, 6] as GradeLevel[]) {
+  for (const wordDef of GRADE_WORDS[grade]) {
+    wordToGradeMap.set(wordDef.word.toLowerCase(), grade);
+  }
+}
+
+/**
+ * Look up the grade level for a word text.
+ * Returns the grade level from the static word catalog, or null if not found.
+ * Note: Custom words added by parents may not have a grade level in the static catalog.
+ */
+function getWordGradeLevel(wordText: string): GradeLevel | null {
+  return wordToGradeMap.get(wordText.toLowerCase()) ?? null;
 }
 
 // =============================================================================
@@ -288,6 +320,37 @@ function createEmptyStatistics(): GameStatistics {
 }
 
 // =============================================================================
+// HELPER: Check for pending (unsynced) changes
+// =============================================================================
+
+/**
+ * Check if there are any pending changes in WatermelonDB that haven't been synced.
+ * Looks for records with _status === 'created' or _status === 'updated'.
+ */
+async function hasPendingChanges(childId: string): Promise<boolean> {
+  const tables = ['word_progress', 'game_sessions', 'statistics', 'calibration', 'learning_progress', 'word_attempts'] as const;
+
+  for (const tableName of tables) {
+    const collection = database.get(tableName);
+    const pendingCount = await collection
+      .query(
+        Q.where('child_id', childId),
+        Q.or(
+          Q.where('_status', 'created'),
+          Q.where('_status', 'updated')
+        )
+      )
+      .fetchCount();
+
+    if (pendingCount > 0) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+// =============================================================================
 // STANDALONE MIGRATIONS (called during initialization)
 // =============================================================================
 
@@ -383,6 +446,58 @@ async function migrateLocalAttemptHistory(childId: string): Promise<number> {
   return migratedCount;
 }
 
+const LEARNING_PROGRESS_MIGRATION_KEY = 'learning_progress_schema_migrated';
+
+/**
+ * One-time migration: Copy total_points to total_lifetime_points for sync compatibility.
+ * This ensures existing learning progress data has the new field populated.
+ * Safe to run multiple times - checks for existing migration flag.
+ */
+async function migrateLearningProgressSchema(childId: string): Promise<void> {
+  const migrationFlag = `${LEARNING_PROGRESS_MIGRATION_KEY}_${childId}`;
+  if (localStorage.getItem(migrationFlag) === 'true') {
+    return;
+  }
+
+  const learningProgressCollection = database.get<LearningProgressModel>('learning_progress');
+
+  // Fetch learning progress record for this child
+  const records = await learningProgressCollection
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  if (records.length === 0) {
+    console.log('[useDatabase] No learning progress record to migrate');
+    localStorage.setItem(migrationFlag, 'true');
+    return;
+  }
+
+  const record = records[0];
+  const totalPoints = record.totalPoints || 0;
+  const totalLifetimePoints = record.totalLifetimePoints || 0;
+
+  // Only migrate if total_lifetime_points is not yet set but total_points exists
+  if (totalPoints > 0 && totalLifetimePoints === 0) {
+    console.log(`[useDatabase] Migrating learning progress: copying ${totalPoints} points to total_lifetime_points`);
+
+    await database.write(async () => {
+      await record.update(r => {
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.total_lifetime_points = totalPoints;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.client_updated_at = Date.now();
+      });
+    });
+
+    console.log('[useDatabase] Learning progress schema migration complete');
+  } else {
+    console.log('[useDatabase] Learning progress schema already migrated or no points to migrate');
+  }
+
+  // Mark migration as complete
+  localStorage.setItem(migrationFlag, 'true');
+}
+
 /**
  * Deduplicate word_progress records for a child by word_text.
  * This is a standalone function (not a hook) so it can be called during initialization.
@@ -440,6 +555,14 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const [isSyncing, setIsSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Initial sync state - detect if this is a new device/browser for this child
+  const [needsInitialSync, setNeedsInitialSync] = useState<boolean>(() =>
+    getLastPulledAt(childId) === null
+  );
+  const [initialSyncCompleted, setInitialSyncCompleted] = useState<boolean>(() =>
+    getLastPulledAt(childId) !== null
+  );
+
   // Sync health state
   const [syncHealth, setSyncHealth] = useState<SyncHealthReport | null>(null);
   const healthCheckIntervalRef = useRef<NodeJS.Timeout | null>(null);
@@ -450,6 +573,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const [gameSessionRecords, setGameSessionRecords] = useState<GameSession[]>([]);
   const [calibrationRecords, setCalibrationRecords] = useState<Calibration[]>([]);
   const [learningProgressRecord, setLearningProgressRecord] = useState<LearningProgressModel | null>(null);
+  const [gradeProgressRecords, setGradeProgressRecords] = useState<GradeProgressModel[]>([]);
   const [wordBankMetadataRecord, setWordBankMetadataRecord] = useState<WordBankMetadata | null>(null);
   const [wordAttemptRecords, setWordAttemptRecords] = useState<WordAttemptModel[]>([]);
 
@@ -479,6 +603,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         console.log('[useDatabase] Checking for local attempt history to migrate...');
         await migrateLocalAttemptHistory(childId);
 
+        // Migrate learning_progress to have total_lifetime_points field
+        // This ensures existing data syncs correctly
+        console.log('[useDatabase] Checking for learning progress schema migration...');
+        await migrateLearningProgressSchema(childId);
+
         // Always run deduplication on init to clean up any existing duplicates
         // This handles duplicates from:
         // 1. Previous sync issues (before reconciliation fix)
@@ -491,12 +620,57 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         if (!isCancelled) {
           cleanupSubscriptions = await subscribeToData();
           setIsLoading(false);
+
+          // If this is a new device (never synced for this child) and we're online,
+          // perform initial sync and wait for it to complete before showing UI
+          const lastPulledAt = getLastPulledAt(childId);
+          if (lastPulledAt === null && isOnline) {
+            console.log('[useDatabase] New device detected, starting initial sync...');
+            setNeedsInitialSync(true);
+            setInitialSyncCompleted(false);
+
+            // Set a timeout to allow proceeding even if sync is slow
+            const syncTimeoutId = setTimeout(() => {
+              if (!isCancelled) {
+                console.log('[useDatabase] Initial sync timeout, proceeding anyway');
+                setInitialSyncCompleted(true);
+              }
+            }, 15000); // 15 second timeout
+
+            syncWithSupabase(childId)
+              .then(() => {
+                clearTimeout(syncTimeoutId);
+                if (!isCancelled) {
+                  console.log('[useDatabase] Initial sync completed successfully');
+                  setInitialSyncCompleted(true);
+                }
+              })
+              .catch(err => {
+                clearTimeout(syncTimeoutId);
+                console.error('[useDatabase] Initial sync failed:', err);
+                if (!isCancelled) {
+                  // Still mark as completed so user can proceed (will use empty local data)
+                  setInitialSyncCompleted(true);
+                }
+              });
+          } else if (lastPulledAt === null && !isOnline) {
+            // Offline and never synced - mark as completed so user can proceed
+            console.log('[useDatabase] New device but offline, allowing to proceed');
+            setNeedsInitialSync(true);
+            setInitialSyncCompleted(true);
+          } else {
+            // Already synced before, no initial sync needed
+            setNeedsInitialSync(false);
+            setInitialSyncCompleted(true);
+          }
         }
       } catch (err) {
         console.error('[useDatabase] Initialization error:', err);
         if (!isCancelled) {
           setError(err instanceof Error ? err.message : 'Failed to initialize database');
           setIsLoading(false);
+          // Mark sync as completed on error so user isn't stuck
+          setInitialSyncCompleted(true);
         }
       }
     }
@@ -507,6 +681,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
       const gameSessionCollection = database.get<GameSession>('game_sessions');
       const calibrationCollection = database.get<Calibration>('calibration');
       const learningProgressCollection = database.get<LearningProgressModel>('learning_progress');
+      const gradeProgressCollection = database.get<GradeProgressModel>('grade_progress');
       const wordBankMetadataCollection = database.get<WordBankMetadata>('word_bank_metadata');
       const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
@@ -542,12 +717,20 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
           if (!isCancelled) setCalibrationRecords(records);
         });
 
-      // Learning Progress
+      // Learning Progress (global lifetime)
       const lpSubscription = learningProgressCollection
         .query(Q.where('child_id', childId))
         .observe()
         .subscribe(records => {
           if (!isCancelled) setLearningProgressRecord(records[0] || null);
+        });
+
+      // Grade Progress (per-grade)
+      const gpSubscription = gradeProgressCollection
+        .query(Q.where('child_id', childId))
+        .observe()
+        .subscribe(records => {
+          if (!isCancelled) setGradeProgressRecords(records);
         });
 
       // Word Bank Metadata
@@ -573,6 +756,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         gsSubscription.unsubscribe();
         calSubscription.unsubscribe();
         lpSubscription.unsubscribe();
+        gpSubscription.unsubscribe();
         wbmSubscription.unsubscribe();
         waSubscription.unsubscribe();
       };
@@ -587,7 +771,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         cleanupSubscriptions();
       }
     };
-  }, [childId]);
+  }, [childId, isOnline]);
 
   // ==========================================================================
   // DERIVED STATE
@@ -630,10 +814,26 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const hasCompletedCalibration = calibration.hasCompletedCalibration;
 
   const learningProgress: LearningProgress = useMemo(() => ({
-    totalPoints: learningProgressRecord?.totalPoints || 0,
+    totalPoints: learningProgressRecord?.totalPoints || learningProgressRecord?.totalLifetimePoints || 0,
     pointsHistory: learningProgressRecord?.pointHistory || [],
     lastUpdated: new Date().toISOString(),
   }), [learningProgressRecord]);
+
+  // Convert grade progress records to a Map<GradeLevel, GradeProgressData>
+  const gradeProgress: Map<GradeLevel, GradeProgressData> = useMemo(() => {
+    const map = new Map<GradeLevel, GradeProgressData>();
+    for (const gp of gradeProgressRecords) {
+      map.set(gp.gradeLevel as GradeLevel, {
+        gradeLevel: gp.gradeLevel,
+        totalPoints: gp.totalPoints,
+        currentMilestoneIndex: gp.currentMilestoneIndex,
+        wordsMastered: gp.wordsMastered,
+        firstPointAt: gp.firstPointAt?.toISOString() ?? null,
+        lastActivityAt: gp.lastActivityAt?.toISOString() ?? null,
+      });
+    }
+    return map;
+  }, [gradeProgressRecords]);
 
   // ==========================================================================
   // WORD EXISTS CHECK
@@ -972,17 +1172,26 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
       if (pointEvents.length > 0) {
         const totalNewPoints = pointEvents.reduce((sum, e) => sum + e.points, 0);
         const learningProgressCollection = database.get<LearningProgressModel>('learning_progress');
+        const gradeProgressCollection = database.get<GradeProgressModel>('grade_progress');
 
+        // =====================================================================
+        // UPDATE GLOBAL LEARNING PROGRESS (lifetime points)
+        // =====================================================================
         if (learningProgressRecord) {
           // Update existing record
           const existingHistory: PointEvent[] = learningProgressRecord.pointHistory || [];
           const updatedHistory = [...pointEvents, ...existingHistory].slice(0, 20);
+          const newTotal = (learningProgressRecord.totalPoints || 0) + totalNewPoints;
 
           await learningProgressRecord.update(r => {
             // @ts-expect-error - WatermelonDB _raw setters not typed
-            r._raw.total_points = learningProgressRecord.totalPoints + totalNewPoints;
+            r._raw.total_points = newTotal;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            r._raw.total_lifetime_points = newTotal;
             // @ts-expect-error - WatermelonDB _raw setters not typed
             r._raw.point_history_json = JSON.stringify(updatedHistory);
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            r._raw.client_updated_at = now;
           });
         } else {
           // Create new learning progress record
@@ -993,16 +1202,88 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
             // @ts-expect-error - WatermelonDB _raw setters not typed
             record._raw.total_points = totalNewPoints;
             // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.total_lifetime_points = totalNewPoints;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
             record._raw.current_milestone_index = 0;
             // @ts-expect-error - WatermelonDB _raw setters not typed
             record._raw.milestone_progress = 0;
             // @ts-expect-error - WatermelonDB _raw setters not typed
             record._raw.point_history_json = JSON.stringify(pointEvents.slice(0, 20));
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.client_updated_at = now;
           });
+        }
+
+        // =====================================================================
+        // UPDATE PER-GRADE PROGRESS
+        // Group points by grade level and update each grade's progress
+        // =====================================================================
+        const pointsByGrade = new Map<GradeLevel, { points: number; newMasteries: number }>();
+
+        // Calculate points per grade based on words completed
+        for (const completed of result.completedWords) {
+          const gradeLevel = getWordGradeLevel(completed.word);
+          if (gradeLevel) {
+            const existing = pointsByGrade.get(gradeLevel) || { points: 0, newMasteries: 0 };
+            // Award base points for this word (simplified - uses same total as global)
+            const wordPoints = pointEvents
+              .filter(e => e.wordText?.toLowerCase() === completed.word.toLowerCase())
+              .reduce((sum, e) => sum + e.points, 0);
+            existing.points += wordPoints;
+            pointsByGrade.set(gradeLevel, existing);
+          }
+        }
+
+        // Count new masteries per grade
+        for (const mastery of newMasteries) {
+          const gradeLevel = getWordGradeLevel(mastery.wordText);
+          if (gradeLevel) {
+            const existing = pointsByGrade.get(gradeLevel) || { points: 0, newMasteries: 0 };
+            existing.newMasteries += 1;
+            pointsByGrade.set(gradeLevel, existing);
+          }
+        }
+
+        // Update or create grade progress for each grade with points
+        for (const [gradeLevel, gradeData] of pointsByGrade) {
+          const existingGradeProgress = gradeProgressRecords.find(gp => gp.gradeLevel === gradeLevel);
+
+          if (existingGradeProgress) {
+            await existingGradeProgress.update(gp => {
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              gp._raw.total_points = existingGradeProgress.totalPoints + gradeData.points;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              gp._raw.words_mastered = existingGradeProgress.wordsMastered + gradeData.newMasteries;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              gp._raw.last_activity_at = now;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              gp._raw.client_updated_at = now;
+            });
+          } else {
+            await gradeProgressCollection.create(record => {
+              record._raw.id = crypto.randomUUID();
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.child_id = childId;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.grade_level = gradeLevel;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.total_points = gradeData.points;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.current_milestone_index = 0;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.words_mastered = gradeData.newMasteries;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.first_point_at = now;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.last_activity_at = now;
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              record._raw.client_updated_at = now;
+            });
+          }
         }
       }
     });
-  }, [childId, statisticsRecords, wordProgressRecords, learningProgressRecord]);
+  }, [childId, statisticsRecords, wordProgressRecords, learningProgressRecord, gradeProgressRecords]);
 
   // ==========================================================================
   // CLEAR HISTORY
@@ -1156,7 +1437,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     }
   }, [childId, isOnline, isSyncing]);
 
-  // Periodic sync health check (every 5 minutes when online)
+  // Periodic sync health check and pending changes sync (every 5 minutes when online)
   useEffect(() => {
     // Clear any existing interval
     if (healthCheckIntervalRef.current) {
@@ -1173,8 +1454,21 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     }, 5000); // Wait 5 seconds after mount for initial sync to complete
 
     // Set up periodic checks every 5 minutes
-    healthCheckIntervalRef.current = setInterval(() => {
+    healthCheckIntervalRef.current = setInterval(async () => {
       checkSyncHealth();
+
+      // Also sync if there are pending changes (prevents data staying local indefinitely)
+      try {
+        const hasPending = await hasPendingChanges(childId);
+        if (hasPending && !isSyncing) {
+          console.log('[useDatabase] Periodic sync: found pending changes');
+          syncNow().catch(err => {
+            console.warn('[useDatabase] Periodic sync failed:', err);
+          });
+        }
+      } catch (err) {
+        console.warn('[useDatabase] Error checking pending changes:', err);
+      }
     }, 5 * 60 * 1000);
 
     return () => {
@@ -1183,7 +1477,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         clearInterval(healthCheckIntervalRef.current);
       }
     };
-  }, [isOnline, isLoading, checkSyncHealth]);
+  }, [isOnline, isLoading, checkSyncHealth, childId, isSyncing, syncNow]);
 
   // Derived sync health status for quick access
   const syncHealthStatus: SyncHealthStatus = syncHealth?.status ?? (isOnline ? 'checking' : 'offline');
@@ -1197,21 +1491,36 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     const statsCollection = database.get<Statistics>('statistics');
     const gsCollection = database.get<GameSession>('game_sessions');
     const lpCollection = database.get<LearningProgressModel>('learning_progress');
+    const gpCollection = database.get<GradeProgressModel>('grade_progress');
     const wbmCollection = database.get<WordBankMetadata>('word_bank_metadata');
     const calibrationCollection = database.get<Calibration>('calibration');
     const waCollection = database.get<WordAttemptModel>('word_attempts');
 
-    const [freshWP, freshStats, freshGS, freshLP, freshMeta, freshCalibration, freshAttempts] = await Promise.all([
+    const [freshWP, freshStats, freshGS, freshLP, freshGP, freshMeta, freshCalibration, freshAttempts] = await Promise.all([
       wpCollection.query(Q.where('child_id', childId)).fetch(),
       statsCollection.query(Q.where('child_id', childId)).fetch(),
       gsCollection.query(Q.where('child_id', childId), Q.sortBy('played_at', Q.desc)).fetch(),
       lpCollection.query(Q.where('child_id', childId)).fetch(),
+      gpCollection.query(Q.where('child_id', childId)).fetch(),
       wbmCollection.query(Q.where('child_id', childId)).fetch(),
       calibrationCollection.query(Q.where('child_id', childId)).fetch(),
       waCollection.query(Q.where('child_id', childId), Q.sortBy('attempted_at', Q.desc)).fetch(),
     ]);
 
     const freshAttemptsMap = buildAttemptsMap(freshAttempts);
+
+    // Build grade progress map
+    const freshGradeProgress = new Map<GradeLevel, GradeProgressData>();
+    for (const gp of freshGP) {
+      freshGradeProgress.set(gp.gradeLevel as GradeLevel, {
+        gradeLevel: gp.gradeLevel,
+        totalPoints: gp.totalPoints,
+        currentMilestoneIndex: gp.currentMilestoneIndex,
+        wordsMastered: gp.wordsMastered,
+        firstPointAt: gp.firstPointAt?.toISOString() ?? null,
+        lastActivityAt: gp.lastActivityAt?.toISOString() ?? null,
+      });
+    }
 
     return {
       wordBank: {
@@ -1222,10 +1531,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
       },
       statistics: statisticsToGameStatistics(freshStats, freshGS),
       learningProgress: {
-        totalPoints: freshLP[0]?.totalPoints || 0,
+        totalPoints: freshLP[0]?.totalPoints || freshLP[0]?.totalLifetimePoints || 0,
         pointsHistory: freshLP[0]?.pointHistory || [],
         lastUpdated: new Date().toISOString(),
       },
+      gradeProgress: freshGradeProgress,
       hasCompletedCalibration: freshCalibration.length > 0,
     };
   }, [childId]);
@@ -1234,6 +1544,8 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     isLoading,
     isMigrating,
     error,
+    needsInitialSync,
+    initialSyncCompleted,
     wordBank,
     addWord,
     removeWord,
@@ -1248,6 +1560,7 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     recordGame,
     clearHistory,
     learningProgress,
+    gradeProgress,
     calibration,
     hasCompletedCalibration,
     setCalibrationComplete,

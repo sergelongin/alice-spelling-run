@@ -3,7 +3,6 @@ import { Search, ChevronLeft, ChevronRight, Check, X, Sparkles, Trash2, Loader2 
 import { Button, Modal } from '@/components/common';
 import { useAuth } from '@/context/AuthContext';
 import {
-  GRADE_WORDS,
   GRADE_INFO,
   GradeLevel,
   WordDefinition,
@@ -11,6 +10,7 @@ import {
   deleteCustomWord,
   CustomWord,
 } from '@/data/gradeWords';
+import { useWordCatalog } from '@/hooks/useWordCatalog';
 
 interface WordCatalogModalProps {
   isOpen: boolean;
@@ -42,6 +42,9 @@ export function WordCatalogModal({
   const [selectedWords, setSelectedWords] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
 
+  // Get words from local catalog (synced from Supabase, with fallback to local files)
+  const { words: catalogWords, isLoading: isLoadingCatalog, countsByGrade } = useWordCatalog();
+
   // Custom words state
   const [customWords, setCustomWords] = useState<CustomWord[]>([]);
   const [isLoadingCustom, setIsLoadingCustom] = useState(false);
@@ -58,16 +61,17 @@ export function WordCatalogModal({
     }
   }, [isOpen, user]);
 
-  // Get all words from all grades
+  // Get all system words (non-custom) from the catalog
   const allGradeWords = useMemo(() => {
-    const words: (WordDefinition & { grade: GradeLevel })[] = [];
-    for (const grade of [3, 4, 5, 6] as GradeLevel[]) {
-      for (const word of GRADE_WORDS[grade]) {
-        words.push({ ...word, grade });
-      }
-    }
-    return words;
-  }, []);
+    return catalogWords
+      .filter(w => !w.isCustom)
+      .map(w => ({
+        word: w.word,
+        definition: w.definition,
+        example: w.example,
+        grade: w.gradeLevel,
+      }));
+  }, [catalogWords]);
 
   // Filter grade words based on search, grade, and status
   const filteredGradeWords = useMemo(() => {
@@ -284,7 +288,7 @@ export function WordCatalogModal({
               <option value="all">All Grades</option>
               {GRADE_INFO.map(info => (
                 <option key={info.grade} value={info.grade}>
-                  {info.name} ({info.wordCount})
+                  {info.name} ({countsByGrade[info.grade] || info.wordCount})
                 </option>
               ))}
             </select>
@@ -333,10 +337,10 @@ export function WordCatalogModal({
 
         {/* Word list */}
         <div className="flex-1 overflow-y-auto border border-gray-200 rounded-lg">
-          {isLoadingCustom && activeTab === 'custom-words' ? (
+          {(isLoadingCatalog && activeTab === 'grade-words') || (isLoadingCustom && activeTab === 'custom-words') ? (
             <div className="flex items-center justify-center h-full text-gray-500">
               <Loader2 size={24} className="animate-spin mr-2" />
-              Loading custom words...
+              {activeTab === 'grade-words' ? 'Loading word catalog...' : 'Loading custom words...'}
             </div>
           ) : paginatedWords.length === 0 ? (
             <div className="flex flex-col items-center justify-center h-full text-gray-500">

@@ -22,6 +22,16 @@ export interface LearningProgress {
   lastUpdated: string;
 }
 
+// Per-grade progress tracking (one per child per grade)
+export interface GradeProgressData {
+  gradeLevel: number;
+  totalPoints: number;
+  currentMilestoneIndex: number;
+  wordsMastered: number;
+  firstPointAt: string | null;
+  lastActivityAt: string | null;
+}
+
 // Default initial learning progress
 export const createInitialLearningProgress = (): LearningProgress => ({
   totalPoints: 0,
