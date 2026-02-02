@@ -16,6 +16,7 @@ import type {
   GradeScore,
 } from '@/types';
 import type { GradeLevel } from '@/data/gradeWords';
+import { syncLog, safeTimestamp } from './syncDebug';
 
 // Generic record type for WatermelonDB raw records
 type RawRecord = Record<string, unknown>;
@@ -166,9 +167,16 @@ export interface SyncChangeset {
 
 /**
  * Convert server word progress to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
  */
 export function transformWordProgressFromServer(row: ServerWordProgress): RawRecord {
-  return {
+  const lastAttemptAt = safeTimestamp(row.last_attempt_at);
+  const nextReviewAt = safeTimestamp(row.next_review_at);
+  const introducedAt = safeTimestamp(row.introduced_at);
+  const archivedAt = safeTimestamp(row.archived_at);
+
+  // Log warning if any timestamp was invalid (safeTimestamp logs internally)
+  const record: RawRecord = {
     id: row.id, // Use server ID as WatermelonDB ID for synced records
     child_id: row.child_id,
     word_text: row.word_text,
@@ -176,25 +184,35 @@ export function transformWordProgressFromServer(row: ServerWordProgress): RawRec
     correct_streak: row.correct_streak,
     times_used: row.times_used,
     times_correct: row.times_correct,
-    last_attempt_at: row.last_attempt_at ? new Date(row.last_attempt_at).getTime() : null,
-    next_review_at: row.next_review_at ? new Date(row.next_review_at).getTime() : null,
-    introduced_at: row.introduced_at ? new Date(row.introduced_at).getTime() : null,
+    last_attempt_at: lastAttemptAt,
+    next_review_at: nextReviewAt,
+    introduced_at: introducedAt,
     is_active: row.is_active,
-    archived_at: row.archived_at ? new Date(row.archived_at).getTime() : null,
+    archived_at: archivedAt,
     server_id: row.id,
   };
+
+  return record;
 }
 
 /**
  * Convert server game session to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
  */
 export function transformGameSessionFromServer(row: ServerGameSession): RawRecord {
+  const playedAt = safeTimestamp(row.played_at);
+
+  // Validate required timestamp
+  if (playedAt === null || playedAt === 0) {
+    syncLog.warn('Transform', `game_session ${row.id} has invalid played_at: ${row.played_at}`);
+  }
+
   return {
     id: row.id,
     child_id: row.child_id,
     client_session_id: row.client_session_id,
     mode: row.mode,
-    played_at: new Date(row.played_at).getTime(),
+    played_at: playedAt ?? 0, // Fallback to epoch if null
     duration_seconds: row.duration_seconds,
     words_attempted: row.words_attempted,
     words_correct: row.words_correct,
@@ -231,13 +249,21 @@ export function transformStatisticsFromServer(row: ServerStatistics): RawRecord 
 
 /**
  * Convert server calibration to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
  */
 export function transformCalibrationFromServer(row: ServerCalibration): RawRecord {
+  const completedAt = safeTimestamp(row.completed_at);
+
+  // Validate required timestamp
+  if (completedAt === null || completedAt === 0) {
+    syncLog.warn('Transform', `calibration ${row.id} has invalid completed_at: ${row.completed_at}`);
+  }
+
   return {
     id: row.id,
     child_id: row.child_id,
     client_calibration_id: row.client_calibration_id,
-    completed_at: new Date(row.completed_at).getTime(),
+    completed_at: completedAt ?? 0, // Fallback to epoch if null
     status: row.status,
     recommended_grade: row.recommended_grade,
     confidence: row.confidence,
@@ -250,8 +276,23 @@ export function transformCalibrationFromServer(row: ServerCalibration): RawRecor
 
 /**
  * Convert server word attempt to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
+ *
+ * CRITICAL: attempted_at is required. If it's null/invalid, the record will
+ * still be created with epoch timestamp (0) rather than NaN which would cause
+ * WatermelonDB to silently reject the record.
  */
 export function transformWordAttemptFromServer(row: ServerWordAttempt): RawRecord {
+  const attemptedAt = safeTimestamp(row.attempted_at);
+
+  // Validate required timestamp - this is the most common cause of sync issues
+  if (attemptedAt === null || attemptedAt === 0) {
+    syncLog.warn(
+      'Transform',
+      `word_attempt ${row.id} (client: ${row.client_attempt_id}) has invalid attempted_at: ${row.attempted_at}`
+    );
+  }
+
   return {
     id: row.id,
     child_id: row.child_id,
@@ -262,7 +303,7 @@ export function transformWordAttemptFromServer(row: ServerWordAttempt): RawRecor
     was_correct: row.was_correct,
     mode: row.mode,
     time_ms: row.time_ms,
-    attempted_at: new Date(row.attempted_at).getTime(),
+    attempted_at: attemptedAt ?? 0, // Fallback to epoch if null (prevents NaN rejection)
     session_id: row.session_id,
     server_id: row.id,
   };
@@ -270,8 +311,11 @@ export function transformWordAttemptFromServer(row: ServerWordAttempt): RawRecor
 
 /**
  * Convert server learning progress to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
  */
 export function transformLearningProgressFromServer(row: ServerLearningProgress): RawRecord {
+  const clientUpdatedAt = safeTimestamp(row.client_updated_at);
+
   return {
     id: row.id,
     child_id: row.child_id,
@@ -280,15 +324,20 @@ export function transformLearningProgressFromServer(row: ServerLearningProgress)
     current_milestone_index: row.current_milestone_index,
     milestone_progress: row.milestone_progress,
     point_history_json: row.point_history ? JSON.stringify(row.point_history) : null,
-    client_updated_at: row.client_updated_at ? new Date(row.client_updated_at).getTime() : null,
+    client_updated_at: clientUpdatedAt,
     server_id: row.id,
   };
 }
 
 /**
  * Convert server grade progress to WatermelonDB raw record
+ * Uses safe timestamp conversion to prevent NaN values
  */
 export function transformGradeProgressFromServer(row: ServerGradeProgress): RawRecord {
+  const firstPointAt = safeTimestamp(row.first_point_at);
+  const lastActivityAt = safeTimestamp(row.last_activity_at);
+  const clientUpdatedAt = safeTimestamp(row.client_updated_at);
+
   return {
     id: row.id,
     child_id: row.child_id,
@@ -296,9 +345,9 @@ export function transformGradeProgressFromServer(row: ServerGradeProgress): RawR
     total_points: row.total_points,
     current_milestone_index: row.current_milestone_index,
     words_mastered: row.words_mastered,
-    first_point_at: row.first_point_at ? new Date(row.first_point_at).getTime() : null,
-    last_activity_at: row.last_activity_at ? new Date(row.last_activity_at).getTime() : null,
-    client_updated_at: row.client_updated_at ? new Date(row.client_updated_at).getTime() : null,
+    first_point_at: firstPointAt,
+    last_activity_at: lastActivityAt,
+    client_updated_at: clientUpdatedAt,
     server_id: row.id,
   };
 }
@@ -358,20 +407,24 @@ export function transformPullChanges(serverData: ServerPullResponse): SyncChange
 
 /**
  * Convert WatermelonDB word progress to server format
- * IMPORTANT: child_id is included so RPC can use the record's own child_id
+ * IMPORTANT: Only metadata fields are pushed. Mastery fields are computed server-side from word_attempts.
+ *
+ * Fields pushed:
+ * - child_id, word_text: Identity
+ * - introduced_at, next_review_at: Scheduling
+ * - is_active, archived_at: User preferences
+ * - definition, example_sentence: Custom word content
+ *
+ * Fields NOT pushed (computed from word_attempts):
+ * - mastery_level, correct_streak, times_used, times_correct, last_attempt_at
  */
 export function transformWordProgressToServer(record: RawRecord): Record<string, unknown> {
   const r = record as Record<string, unknown>;
   return {
     child_id: r['child_id'],
     word_text: r['word_text'],
-    mastery_level: r['mastery_level'],
-    correct_streak: r['correct_streak'],
-    times_used: r['times_used'],
-    times_correct: r['times_correct'],
-    last_attempt_at: r['last_attempt_at']
-      ? new Date(r['last_attempt_at'] as number).toISOString()
-      : null,
+    // Mastery fields are computed server-side from word_attempts - don't push
+    // mastery_level, correct_streak, times_used, times_correct, last_attempt_at: COMPUTED
     next_review_at: r['next_review_at']
       ? new Date(r['next_review_at'] as number).toISOString()
       : null,
@@ -382,6 +435,9 @@ export function transformWordProgressToServer(record: RawRecord): Record<string,
     archived_at: r['archived_at']
       ? new Date(r['archived_at'] as number).toISOString()
       : null,
+    // Include definition for custom words
+    definition: r['definition'] || null,
+    example_sentence: r['example_sentence'] || null,
     client_updated_at: new Date().toISOString(),
   };
 }
@@ -412,37 +468,14 @@ export function transformGameSessionToServer(record: RawRecord): Record<string, 
 }
 
 /**
- * Convert WatermelonDB statistics to server format
- * IMPORTANT: child_id is included so RPC can use the record's own child_id
+ * @deprecated Statistics are now computed server-side from game_sessions.
+ * This function is kept for reference but should not be used.
+ * Statistics are PULL-ONLY (computed from events) in the new architecture.
  */
-export function transformStatisticsToServer(record: RawRecord): Record<string, unknown> {
-  const r = record as Record<string, unknown>;
-  return {
-    child_id: r['child_id'],
-    mode: r['mode'],
-    total_games_played: r['total_games_played'],
-    total_wins: r['total_wins'],
-    total_words_attempted: r['total_words_attempted'],
-    total_words_correct: r['total_words_correct'],
-    streak_current: r['streak_current'],
-    streak_best: r['streak_best'],
-    trophy_counts: r['trophy_counts_json']
-      ? JSON.parse(r['trophy_counts_json'] as string)
-      : null,
-    word_accuracy: r['word_accuracy_json']
-      ? JSON.parse(r['word_accuracy_json'] as string)
-      : null,
-    first_correct_dates: r['first_correct_dates_json']
-      ? JSON.parse(r['first_correct_dates_json'] as string)
-      : null,
-    personal_bests: r['personal_bests_json']
-      ? JSON.parse(r['personal_bests_json'] as string)
-      : null,
-    error_patterns: r['error_patterns_json']
-      ? JSON.parse(r['error_patterns_json'] as string)
-      : null,
-    client_updated_at: new Date().toISOString(),
-  };
+export function transformStatisticsToServer(_record: RawRecord): Record<string, unknown> {
+  // Statistics are computed server-side from game_sessions events.
+  // No push needed - server derives stats from INSERT-only game_sessions.
+  throw new Error('Statistics should not be pushed - they are computed server-side');
 }
 
 /**
@@ -489,23 +522,14 @@ export function transformWordAttemptToServer(record: RawRecord): Record<string, 
 }
 
 /**
- * Convert WatermelonDB learning progress to server format
- * IMPORTANT: child_id is included so RPC can use the record's own child_id
+ * @deprecated Learning progress points are now computed server-side from word_attempts.
+ * This function is kept for reference but should not be used.
+ * Learning progress is PULL-ONLY (computed from events) in the new architecture.
  */
-export function transformLearningProgressToServer(record: RawRecord): Record<string, unknown> {
-  const r = record as Record<string, unknown>;
-  return {
-    child_id: r['child_id'],
-    total_lifetime_points: r['total_lifetime_points'] ?? r['total_points'], // Use new field or fallback to legacy
-    current_milestone_index: r['current_milestone_index'],
-    milestone_progress: r['milestone_progress'],
-    point_history: r['point_history_json']
-      ? JSON.parse(r['point_history_json'] as string)
-      : null,
-    client_updated_at: r['client_updated_at']
-      ? new Date(r['client_updated_at'] as number).toISOString()
-      : new Date().toISOString(),
-  };
+export function transformLearningProgressToServer(_record: RawRecord): Record<string, unknown> {
+  // Learning progress points are computed server-side from word_attempts events.
+  // No push needed - server derives points from INSERT-only word_attempts.
+  throw new Error('Learning progress should not be pushed - it is computed server-side');
 }
 
 /**
@@ -534,6 +558,11 @@ export function transformGradeProgressToServer(record: RawRecord): Record<string
 
 /**
  * Transform WatermelonDB push changes to server format
+ *
+ * Note: Statistics and learning_progress are NOT pushed - they are computed server-side.
+ * This is part of the event-sourcing architecture where:
+ * - Events (game_sessions, word_attempts, calibration) are INSERT-only and pushed
+ * - Derived state (statistics, learning_progress points) is computed by server and pulled
  */
 export function transformPushChanges(changes: SyncChangeset): Record<string, unknown> {
   return {
@@ -544,20 +573,18 @@ export function transformPushChanges(changes: SyncChangeset): Record<string, unk
     game_sessions: {
       created: changes.game_sessions.created.map(transformGameSessionToServer),
     },
-    statistics: {
-      created: changes.statistics.created.map(transformStatisticsToServer),
-      updated: changes.statistics.updated.map(transformStatisticsToServer),
-    },
+    // Statistics are NOT pushed - computed server-side from game_sessions
+    // statistics: omitted intentionally
     calibration: {
       created: changes.calibration.created.map(transformCalibrationToServer),
     },
     word_attempts: {
       created: changes.word_attempts.created.map(transformWordAttemptToServer),
     },
-    learning_progress: {
-      created: changes.learning_progress.created.map(transformLearningProgressToServer),
-      updated: changes.learning_progress.updated.map(transformLearningProgressToServer),
-    },
+    // learning_progress is NOT pushed - points are computed server-side from word_attempts
+    // Only milestone metadata (current_milestone_index, milestone_progress) might need sync
+    // but for now we treat the entire learning_progress as computed
+    // learning_progress: omitted intentionally
     grade_progress: {
       created: changes.grade_progress.created.map(transformGradeProgressToServer),
       updated: changes.grade_progress.updated.map(transformGradeProgressToServer),

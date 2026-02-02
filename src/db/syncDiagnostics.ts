@@ -20,7 +20,7 @@ import {
   transformWordAttemptFromServer,
   type ServerPullResponse,
 } from './transforms';
-import type { WordProgress, GameSession, Statistics, Calibration, WordAttemptModel } from './models';
+import type { WordProgress, GameSession, Statistics, Calibration, WordAttemptModel, LearningProgress } from './models';
 
 // =============================================================================
 // TYPES
@@ -40,6 +40,7 @@ export interface SyncHealthReport {
     statistics: number;
     calibration: number;
     wordAttempts: number;
+    learningProgress: number;
   };
   serverCounts?: {
     wordProgress: number;
@@ -47,6 +48,7 @@ export interface SyncHealthReport {
     statistics: number;
     calibration: number;
     wordAttempts: number;
+    learningProgress: number;
   };
   lastSyncLog?: {
     startedAt?: Date;
@@ -294,13 +296,15 @@ async function getLocalCounts(childId: string): Promise<{
   statistics: number;
   calibration: number;
   wordAttempts: number;
+  learningProgress: number;
 }> {
-  const [wpCount, gsCount, statsCount, calCount, waCount] = await Promise.all([
+  const [wpCount, gsCount, statsCount, calCount, waCount, lpCount] = await Promise.all([
     database.get<WordProgress>('word_progress').query(Q.where('child_id', childId)).fetchCount(),
     database.get<GameSession>('game_sessions').query(Q.where('child_id', childId)).fetchCount(),
     database.get<Statistics>('statistics').query(Q.where('child_id', childId)).fetchCount(),
     database.get<Calibration>('calibration').query(Q.where('child_id', childId)).fetchCount(),
     database.get<WordAttemptModel>('word_attempts').query(Q.where('child_id', childId)).fetchCount(),
+    database.get<LearningProgress>('learning_progress').query(Q.where('child_id', childId)).fetchCount(),
   ]);
 
   return {
@@ -309,11 +313,13 @@ async function getLocalCounts(childId: string): Promise<{
     statistics: statsCount,
     calibration: calCount,
     wordAttempts: waCount,
+    learningProgress: lpCount,
   };
 }
 
 /**
  * Get server record counts for a child by querying Supabase directly
+ * Note: statistics and learning_progress use computed views (not stored tables)
  */
 async function getServerCounts(childId: string): Promise<{
   wordProgress: number;
@@ -321,8 +327,9 @@ async function getServerCounts(childId: string): Promise<{
   statistics: number;
   calibration: number;
   wordAttempts: number;
+  learningProgress: number;
 }> {
-  const [wpResult, gsResult, statsResult, calResult, waResult] = await Promise.all([
+  const [wpResult, gsResult, statsResult, calResult, waResult, lpResult] = await Promise.all([
     supabase
       .from('child_word_progress')
       .select('*', { count: 'exact', head: true })
@@ -331,8 +338,10 @@ async function getServerCounts(childId: string): Promise<{
       .from('child_game_sessions')
       .select('*', { count: 'exact', head: true })
       .eq('child_id', childId),
-    supabase
-      .from('child_statistics')
+    // Statistics are computed from game_sessions via computed_child_statistics view
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from('computed_child_statistics')
       .select('*', { count: 'exact', head: true })
       .eq('child_id', childId),
     supabase
@@ -344,6 +353,12 @@ async function getServerCounts(childId: string): Promise<{
       .from('child_word_attempts')
       .select('*', { count: 'exact', head: true })
       .eq('child_id', childId),
+    // Learning progress is computed from word_attempts via computed_child_learning_progress view
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    (supabase as any)
+      .from('computed_child_learning_progress')
+      .select('*', { count: 'exact', head: true })
+      .eq('child_id', childId),
   ]);
 
   return {
@@ -352,6 +367,7 @@ async function getServerCounts(childId: string): Promise<{
     statistics: statsResult.count || 0,
     calibration: calResult.count || 0,
     wordAttempts: waResult.count || 0,
+    learningProgress: lpResult.count || 0,
   };
 }
 
@@ -660,9 +676,22 @@ export async function forceRefreshFromServer(
     console.log('[SyncDiagnostics] Deleted local records for force refresh:', deletedCounts);
 
     // Step 2: Pull ALL data from server with null timestamp (bypasses lastPulledAt)
+    // IMPORTANT: Use pull_changes_for_parent (not legacy pull_changes) because:
+    // - pull_changes_for_parent uses computed_word_mastery view (correct mastery values)
+    // - legacy pull_changes uses raw child_word_progress table (mastery=0)
+    const { data: { session } } = await supabase.auth.getSession();
+    if (!session?.user?.id) {
+      return {
+        status: 'error',
+        deletedCounts,
+        details: 'No authenticated session - cannot pull from server',
+        executedAt,
+      };
+    }
+
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const { data, error } = await (supabase.rpc as any)('pull_changes', {
-      p_child_id: childId,
+    const { data, error } = await (supabase.rpc as any)('pull_changes_for_parent', {
+      p_parent_id: session.user.id,
       p_last_pulled_at: null, // null = get ALL records, not just changes
     });
 
@@ -676,8 +705,23 @@ export async function forceRefreshFromServer(
       };
     }
 
-    const serverData = data as ServerPullResponse;
-    console.log('[SyncDiagnostics] Pulled ALL data from server:', {
+    const rawServerData = data as ServerPullResponse;
+
+    // Filter server data to only include records for the specified child
+    // (pull_changes_for_parent returns ALL children's data)
+    const serverData: ServerPullResponse = {
+      word_progress: rawServerData.word_progress?.filter(r => r.child_id === childId) || [],
+      game_sessions: rawServerData.game_sessions?.filter(r => r.child_id === childId) || [],
+      statistics: rawServerData.statistics?.filter(r => r.child_id === childId) || [],
+      calibration: rawServerData.calibration?.filter(r => r.child_id === childId) || [],
+      word_attempts: rawServerData.word_attempts?.filter(r => r.child_id === childId) || [],
+      learning_progress: rawServerData.learning_progress?.filter(r => r.child_id === childId) || [],
+      grade_progress: rawServerData.grade_progress?.filter(r => r.child_id === childId) || [],
+      timestamp: rawServerData.timestamp,
+      last_reset_at: rawServerData.last_reset_at,
+    };
+
+    console.log('[SyncDiagnostics] Pulled data from server (filtered to child):', {
       word_progress: serverData.word_progress?.length || 0,
       game_sessions: serverData.game_sessions?.length || 0,
       statistics: serverData.statistics?.length || 0,
@@ -814,10 +858,12 @@ export async function forceRefreshFromServer(
  * 3. Re-check health
  *
  * Deep Repair (with options):
- * 1. Optionally clean up orphaned local records
- * 2. Optionally force refresh specified collections from server
- * 3. Run standard sync
- * 4. Re-check health
+ * 1. Push pending local changes FIRST (to avoid data loss)
+ * 2. Abort if push fails and force refresh was requested
+ * 3. Optionally force refresh specified collections from server
+ * 4. Optionally clean up orphaned local records
+ * 5. Run standard sync
+ * 6. Re-check health
  *
  * @param childId - The child ID to heal sync for
  * @param options - Optional deep repair options
@@ -841,8 +887,48 @@ export async function healSyncInconsistencies(
   let refreshReport: ForceRefreshReport | undefined;
 
   try {
-    // Step 1: Force refresh from server if requested
-    // Do this FIRST because it deletes local data and re-pulls
+    // Step 1: Push pending local changes BEFORE any destructive operations
+    // This prevents data loss when force refresh deletes local data
+    if (isDeepRepair) {
+      console.log('[SyncDiagnostics] Pushing pending changes before deep repair...');
+      try {
+        await syncWithSupabase(childId);
+      } catch (syncError) {
+        console.error('[SyncDiagnostics] Pre-repair sync failed:', syncError);
+        // Check if we still have unsynced changes - if so, abort deep repair
+        if (forceRefreshCollections && forceRefreshCollections.length > 0) {
+          const stillHasPending = await hasUnsyncedChanges({ database });
+          if (stillHasPending) {
+            return {
+              status: 'error',
+              hasUnsyncedChanges: true,
+              inconsistencyCount: -1,
+              details: 'Cannot perform deep repair: local changes failed to sync to server. Please try "Sync Now" first to push your changes.',
+              checkedAt: new Date().toISOString(),
+            };
+          }
+        }
+      }
+
+      // Double-check: abort force refresh if we still have unsynced changes
+      if (forceRefreshCollections && forceRefreshCollections.length > 0) {
+        const stillHasPending = await hasUnsyncedChanges({ database });
+        if (stillHasPending) {
+          console.warn('[SyncDiagnostics] Still have unsynced changes after sync, aborting force refresh');
+          return {
+            status: 'error',
+            hasUnsyncedChanges: true,
+            inconsistencyCount: -1,
+            details: 'Cannot perform deep repair: local changes failed to sync to server. Please try "Sync Now" first to push your changes.',
+            checkedAt: new Date().toISOString(),
+          };
+        }
+        console.log('[SyncDiagnostics] All local changes synced, safe to proceed with force refresh');
+      }
+    }
+
+    // Step 2: Force refresh from server if requested
+    // Now safe because we've pushed local changes
     if (forceRefreshCollections && forceRefreshCollections.length > 0) {
       console.log('[SyncDiagnostics] Performing force refresh for:', forceRefreshCollections);
       refreshReport = await forceRefreshFromServer(childId, forceRefreshCollections);
@@ -852,7 +938,7 @@ export async function healSyncInconsistencies(
       }
     }
 
-    // Step 2: Clean up orphaned records if requested
+    // Step 3: Clean up orphaned records if requested
     // Do this AFTER force refresh so we don't delete records that will be refreshed anyway
     if (includeOrphanCleanup) {
       console.log('[SyncDiagnostics] Performing orphan cleanup, dryRun:', dryRun);
@@ -863,7 +949,7 @@ export async function healSyncInconsistencies(
       }
     }
 
-    // Step 3: Standard sync - push local changes, pull server changes
+    // Step 4: Standard sync - push local changes, pull server changes
     await syncWithSupabase(childId);
 
     // Wait a moment for the sync to fully complete
