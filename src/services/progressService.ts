@@ -121,7 +121,9 @@ export async function upsertWordProgress(
 // =============================================================================
 
 /**
- * Fetch all statistics for a child
+ * @deprecated Statistics are now computed server-side from game_sessions via computed_child_statistics view.
+ * This function is kept for backward compatibility but should not be used for new code.
+ * Use WatermelonDB sync (pullChanges) to get computed statistics.
  */
 export async function fetchStatistics(
   childId: string,
@@ -148,9 +150,9 @@ export async function fetchStatistics(
 }
 
 /**
- * Upsert statistics (batch)
- * Note: Uses type assertion for JSONB fields (word_accuracy, personal_bests, etc.)
- * since our typed sync payloads are more specific than Supabase's generic Json type
+ * @deprecated Statistics are now computed server-side from game_sessions.
+ * This function should not be used - statistics are pull-only (not pushed).
+ * Any calls to this function are no-ops since statistics come from computed_child_statistics view.
  */
 export async function upsertStatistics(
   items: StatisticsSyncPayload[]

@@ -10,7 +10,7 @@
  * Uses WatermelonDB diagnostics to show actual sync health status.
  */
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { Cloud, CloudOff, Check, AlertTriangle, Upload, Loader2, Book, Users, ChevronDown, ChevronUp } from 'lucide-react';
 import type { SyncHealthStatus, SyncHealthReport, HealOptions } from '@/db/hooks';
 import type { MultiChildSyncHealthReport } from '@/db/syncDiagnostics';
@@ -50,6 +50,9 @@ export function SyncStatusIndicator({
   const [catalogCounts, setCatalogCounts] = useState<{ local: number; server: number } | null>(null);
   const [isSyncingCatalog, setIsSyncingCatalog] = useState(false);
 
+  // Ref for click-outside detection
+  const containerRef = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
     const handleOffline = () => setIsOnline(false);
@@ -62,6 +65,27 @@ export function SyncStatusIndicator({
       window.removeEventListener('offline', handleOffline);
     };
   }, []);
+
+  // Close dialog when clicking outside
+  useEffect(() => {
+    if (!showDetails) return;
+
+    const handleClickOutside = (event: MouseEvent) => {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setShowDetails(false);
+      }
+    };
+
+    // Use setTimeout to avoid closing immediately from the same click that opened it
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside);
+    }, 0);
+
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('click', handleClickOutside);
+    };
+  }, [showDetails]);
 
   // Fetch word catalog counts when details panel opens
   // Auto-syncs if local count differs from server count
@@ -244,7 +268,7 @@ export function SyncStatusIndicator({
     : '';
 
   return (
-    <div className="relative">
+    <div className="relative" ref={containerRef}>
       <button
         className={`flex items-center justify-center w-8 h-8 rounded-full ${bgColor} ${color} transition-colors hover:opacity-80`}
         title={tooltip}
@@ -252,14 +276,6 @@ export function SyncStatusIndicator({
       >
         {icon}
       </button>
-
-      {/* Backdrop to close on outside click */}
-      {showDetails && (
-        <div
-          className="fixed inset-0 z-40"
-          onClick={() => setShowDetails(false)}
-        />
-      )}
 
       {/* Expanded details panel */}
       {showDetails && (

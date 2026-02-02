@@ -7,7 +7,6 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { Q } from '@nozbe/watermelondb';
 import { database } from '../index';
 import { syncWithSupabase } from '../sync';
-import { getLastPulledAt } from '../syncTimestamps';
 import { migrateChildData, isMigrationComplete, hasLocalStorageData } from '../migration/localStorage-to-watermelon';
 import {
   checkSyncHealth as checkSyncHealthFn,
@@ -556,12 +555,9 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const [error, setError] = useState<string | null>(null);
 
   // Initial sync state - detect if this is a new device/browser for this child
-  const [needsInitialSync, setNeedsInitialSync] = useState<boolean>(() =>
-    getLastPulledAt(childId) === null
-  );
-  const [initialSyncCompleted, setInitialSyncCompleted] = useState<boolean>(() =>
-    getLastPulledAt(childId) !== null
-  );
+  // With parent-level sync, we check if child has any local data instead of per-child timestamps
+  const [needsInitialSync, setNeedsInitialSync] = useState<boolean>(false);
+  const [initialSyncCompleted, setInitialSyncCompleted] = useState<boolean>(false);
 
   // Sync health state
   const [syncHealth, setSyncHealth] = useState<SyncHealthReport | null>(null);
@@ -621,11 +617,16 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
           cleanupSubscriptions = await subscribeToData();
           setIsLoading(false);
 
-          // If this is a new device (never synced for this child) and we're online,
-          // perform initial sync and wait for it to complete before showing UI
-          const lastPulledAt = getLastPulledAt(childId);
-          if (lastPulledAt === null && isOnline) {
-            console.log('[useDatabase] New device detected, starting initial sync...');
+          // Check if this child has any local data (word_progress records)
+          // If no local data exists and we're online, perform initial sync
+          const wordProgressCollection = database.get<WordProgress>('word_progress');
+          const localWordCount = await wordProgressCollection
+            .query(Q.where('child_id', childId))
+            .fetchCount();
+          const hasLocalData = localWordCount > 0;
+
+          if (!hasLocalData && isOnline) {
+            console.log('[useDatabase] No local data for child, starting initial sync...');
             setNeedsInitialSync(true);
             setInitialSyncCompleted(false);
 
@@ -653,13 +654,13 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
                   setInitialSyncCompleted(true);
                 }
               });
-          } else if (lastPulledAt === null && !isOnline) {
-            // Offline and never synced - mark as completed so user can proceed
-            console.log('[useDatabase] New device but offline, allowing to proceed');
+          } else if (!hasLocalData && !isOnline) {
+            // Offline and no local data - mark as completed so user can proceed
+            console.log('[useDatabase] No local data but offline, allowing to proceed');
             setNeedsInitialSync(true);
             setInitialSyncCompleted(true);
           } else {
-            // Already synced before, no initial sync needed
+            // Has local data, no initial sync needed
             setNeedsInitialSync(false);
             setInitialSyncCompleted(true);
           }

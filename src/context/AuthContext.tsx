@@ -25,8 +25,7 @@ import type {
 import { revokeParentDashboardAccess } from '@/hooks/useParentDashboardAccess';
 import { resetWatermelonDBForChild } from '@/db/resetChild';
 import { syncWordCatalog, shouldSyncWordCatalog } from '@/db/syncWordCatalog';
-import { syncAllChildren, syncWithSupabase } from '@/db/sync';
-import { clearLastPulledAt, clearAllSyncTimestamps } from '@/db/syncTimestamps';
+import { syncWithSupabaseForParent } from '@/db/sync';
 
 const ACTIVE_CHILD_KEY = 'alice-spelling-run-active-child';
 const SESSION_PROFILE_SELECTED_KEY = 'alice-spelling-run-profile-selected';
@@ -227,17 +226,14 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
         }
 
         // Sync all children's data in background (non-blocking)
-        // This ensures each child has their data synced with per-child timestamps
+        // Parent-level sync pulls all children at once using WatermelonDB's native timestamp
         if (childrenList.length > 0) {
-          syncAllChildren(childrenList.map(c => ({ id: c.id, name: c.name })))
-            .then(result => {
-              console.log('[Auth] All children synced on login:', result.success ? 'success' : 'partial failure');
-              if (!result.success) {
-                console.warn('[Auth] Some children failed to sync:', result.results.filter(r => r.status === 'error'));
-              }
+          syncWithSupabaseForParent(session.user.id, childrenList.map(c => c.id))
+            .then(() => {
+              console.log('[Auth] All children synced on login');
             })
             .catch(err => {
-              console.warn('[Auth] Multi-child sync failed (non-fatal):', err);
+              console.warn('[Auth] Parent-level sync failed (non-fatal):', err);
             });
         }
       } catch (error) {
@@ -328,18 +324,17 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
             // Sync all children's data in background (non-blocking)
             if (childrenList.length > 0) {
-              syncAllChildren(childrenList.map(c => ({ id: c.id, name: c.name })))
-                .then(result => {
-                  console.log('[Auth] All children synced on sign-in:', result.success ? 'success' : 'partial failure');
+              syncWithSupabaseForParent(session.user.id, childrenList.map(c => c.id))
+                .then(() => {
+                  console.log('[Auth] All children synced on sign-in');
                 })
                 .catch(err => {
-                  console.warn('[Auth] Multi-child sync on sign-in failed (non-fatal):', err);
+                  console.warn('[Auth] Parent-level sync on sign-in failed (non-fatal):', err);
                 });
             }
           }, 0);
         } else if (event === 'SIGNED_OUT') {
           clearAllAuthCache();
-          clearAllSyncTimestamps(); // Clear per-child sync timestamps on logout
           setProfileSelectedThisSession(false);
           setState({ ...initialState, isLoading: false, isValidating: false, cacheStatus: 'none', hasSelectedProfileThisSession: false });
         } else if (event === 'TOKEN_REFRESHED' && session) {
@@ -613,9 +608,8 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
         const watermelonCounts = await resetWatermelonDBForChild(childId);
         console.log('[Auth] WatermelonDB cleared:', watermelonCounts);
 
-        // 4. Clear per-child sync timestamp (forces full re-sync on next sync)
-        clearLastPulledAt(childId);
-        console.log('[Auth] Cleared sync timestamp for child:', childId);
+        // Note: With parent-level sync, WatermelonDB's native lastPulledAt is used.
+        // A full re-sync will happen naturally when child data is cleared.
 
         // Delay to ensure IndexedDB has flushed before any potential reload
         // IndexedDB writes can be async at the browser level
@@ -655,10 +649,14 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       hasSelectedProfileThisSession: true,
     }));
 
-    // Sync the newly selected child immediately in background
-    // This ensures their data is up-to-date using their per-child timestamp
-    syncWithSupabase(childId).catch(err => {
-      console.warn('[Auth] Sync on profile switch failed (non-fatal):', err);
+    // Sync in background - triggers parent-level sync for all children
+    // This ensures data is up-to-date across all children
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      if (session?.user?.id) {
+        syncWithSupabaseForParent(session.user.id, [childId]).catch(err => {
+          console.warn('[Auth] Sync on profile switch failed (non-fatal):', err);
+        });
+      }
     });
   }, []);
 
