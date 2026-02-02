@@ -35,6 +35,7 @@ import type {
 } from '@/types';
 import { calculateSessionPoints } from '@/utils/levelMapUtils';
 import { GRADE_WORDS, type GradeLevel } from '@/data/gradeWords';
+import { computeNextReviewAt } from '@/utils/wordSelection';
 
 // =============================================================================
 // TYPES
@@ -544,6 +545,96 @@ async function deduplicateWordsForChild(childId: string): Promise<number> {
   });
 }
 
+const STUCK_INTRODUCED_REPAIR_KEY = 'stuckIntroducedWordsRepaired';
+// Version the repair to allow re-running if we find new issues
+const STUCK_INTRODUCED_REPAIR_VERSION = 'v2';
+
+/**
+ * One-time repair: Fix words that have been practiced (have attempt records) but
+ * are stuck with introducedAt = null (still showing as "Coming Soon").
+ *
+ * This happens when words are played but markWordsAsIntroduced wasn't called,
+ * typically because the word selection algorithm didn't add them to wordsToIntroduce.
+ *
+ * Safe to run multiple times - checks for existing repair flag with version.
+ */
+async function repairStuckIntroducedWords(childId: string): Promise<number> {
+  const migrationFlag = `${STUCK_INTRODUCED_REPAIR_KEY}_${STUCK_INTRODUCED_REPAIR_VERSION}_${childId}`;
+  if (localStorage.getItem(migrationFlag) === 'true') {
+    return 0;
+  }
+
+  const wordProgressCollection = database.get<WordProgress>('word_progress');
+  const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
+
+  // Get all word texts that have attempt records
+  const attempts = await wordAttemptCollection
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  const wordsWithAttempts = new Set(attempts.map(a => a.wordText.toLowerCase()));
+
+  if (wordsWithAttempts.size === 0) {
+    console.log('[useDatabase] No words with attempts to repair');
+    localStorage.setItem(migrationFlag, 'true');
+    return 0;
+  }
+
+  // Find word_progress records that have attempts but no introducedAt
+  const wordProgressRecords = await wordProgressCollection
+    .query(Q.where('child_id', childId))
+    .fetch();
+
+  const stuckWords = wordProgressRecords.filter(wp =>
+    wordsWithAttempts.has(wp.wordText.toLowerCase()) && !wp.introducedAtRaw
+  );
+
+  if (stuckWords.length === 0) {
+    console.log('[useDatabase] No stuck words to repair');
+    localStorage.setItem(migrationFlag, 'true');
+    return 0;
+  }
+
+  console.log(`[useDatabase] Found ${stuckWords.length} stuck words to repair:`,
+    stuckWords.map(w => w.wordText));
+
+  const now = Date.now();
+  let repairedCount = 0;
+
+  await database.write(async () => {
+    for (const wordRecord of stuckWords) {
+      // Find the earliest attempt for this word to use as introducedAt
+      const wordAttempts = attempts.filter(
+        a => a.wordText.toLowerCase() === wordRecord.wordText.toLowerCase()
+      );
+      const earliestAttempt = wordAttempts.reduce((earliest, current) =>
+        current.attemptedAt < earliest.attemptedAt ? current : earliest
+      );
+
+      const introducedAt = earliestAttempt?.attemptedAt || now;
+
+      await wordRecord.update(r => {
+        // Use _raw.column_name pattern for reliable persistence
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.introduced_at = introducedAt;
+        // Also set next_review_at if not set
+        if (!wordRecord.nextReviewAtRaw) {
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          r._raw.next_review_at = now;
+        }
+      });
+
+      console.log(`[useDatabase] Repaired word "${wordRecord.wordText}" - introducedAt set to ${new Date(introducedAt).toISOString()}`);
+      repairedCount++;
+    }
+  });
+
+  console.log(`[useDatabase] Repaired ${repairedCount} stuck words`);
+  localStorage.setItem(migrationFlag, 'true');
+
+  return repairedCount;
+}
+
 // =============================================================================
 // MAIN HOOK
 // =============================================================================
@@ -611,6 +702,11 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
         // 3. Race conditions from rapid imports
         console.log('[useDatabase] Running deduplication check...');
         await deduplicateWordsForChild(childId);
+
+        // Repair words that have attempts but no introducedAt (stuck in "Coming Soon")
+        // This fixes data corrupted by Vite/esbuild decorator transpilation issues
+        console.log('[useDatabase] Checking for stuck introduced words to repair...');
+        await repairStuckIntroducedWords(childId);
 
         // Subscribe to data changes
         if (!isCancelled) {
@@ -908,23 +1004,39 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
   const markWordsAsIntroduced = useCallback(async (wordTexts: string[]): Promise<void> => {
     if (wordTexts.length === 0) return;
 
+    console.log('[markWordsAsIntroduced] Starting with words:', wordTexts);
+
     const now = Date.now();
     const textsToIntroduce = new Set(wordTexts.map(t => t.toLowerCase()));
+    const collection = database.get<WordProgress>('word_progress');
 
     await database.write(async () => {
-      for (const record of wordProgressRecords) {
+      // Fetch fresh records inside the write transaction to avoid stale closure issues
+      const freshRecords = await collection
+        .query(Q.where('child_id', childId))
+        .fetch();
+
+      console.log('[markWordsAsIntroduced] Found', freshRecords.length, 'records');
+
+      for (const record of freshRecords) {
         if (textsToIntroduce.has(record.wordText.toLowerCase()) && !record.introducedAtRaw) {
+          console.log('[markWordsAsIntroduced] Updating word:', record.wordText);
+          console.log('[markWordsAsIntroduced] BEFORE: introducedAtRaw =', record.introducedAtRaw);
+
           await record.update(r => {
-            // Use decorated field setters for proper sync tracking
-
-            r.introducedAtRaw = now;
-
-            r.nextReviewAtRaw = now;
+            // Use _raw.column_name pattern for reliable persistence
+            // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            r._raw.introduced_at = now;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            r._raw.next_review_at = now;
           });
+
+          console.log('[markWordsAsIntroduced] AFTER: introducedAtRaw =', record.introducedAtRaw);
         }
       }
     });
-  }, [wordProgressRecords]);
+  }, [childId]);
 
   const forceIntroduceWord = useCallback(async (id: string): Promise<void> => {
     const now = Date.now();
@@ -933,11 +1045,12 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // Use decorated field setters for proper sync tracking
-
-        r.introducedAtRaw = now;
-
-        r.nextReviewAtRaw = now;
+        // Use _raw.column_name pattern for reliable persistence
+        // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.introduced_at = now;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.next_review_at = now;
       });
     });
   }, []);
@@ -949,11 +1062,12 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // Use decorated field setters for proper sync tracking
-
-        r.isActive = false;
-
-        r.archivedAtRaw = now;
+        // Use _raw.column_name pattern for reliable persistence
+        // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.is_active = false;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.archived_at = now;
       });
     });
   }, []);
@@ -964,11 +1078,12 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     await database.write(async () => {
       const record = await collection.find(id);
       await record.update(r => {
-        // Use decorated field setters for proper sync tracking
-
-        r.isActive = true;
-
-        r.archivedAtRaw = null;
+        // Use _raw.column_name pattern for reliable persistence
+        // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.is_active = true;
+        // @ts-expect-error - WatermelonDB _raw setters not typed
+        r._raw.archived_at = null;
       });
     });
   }, []);
@@ -998,6 +1113,8 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
     const wordAttemptCollection = database.get<WordAttemptModel>('word_attempts');
 
     await database.write(async () => {
+      // Create word_attempt record only - mastery updates happen in recordGame()
+      // to avoid double-updating (once here and once in recordGame)
       await wordAttemptCollection.create(record => {
         record._raw.id = crypto.randomUUID();
         // @ts-expect-error - WatermelonDB _raw setters not typed
@@ -1069,31 +1186,28 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
 
       if (existingStats) {
         await existingStats.update(s => {
-          // IMPORTANT: Use decorated field setters (not _raw) to enable WatermelonDB change tracking!
-          // The @field decorator creates setters that call _setRaw internally, which properly
-          // marks the record as "updated" and tracks changed fields for sync.
-          // Direct _raw modifications bypass this tracking and break sync.
-
-
-          s.totalGamesPlayed = existingStats.totalGamesPlayed + 1;
-
-          s.totalWins = existingStats.totalWins + (result.won ? 1 : 0);
-
-          s.totalWordsAttempted = existingStats.totalWordsAttempted + result.wordsAttempted;
-
-          s.totalWordsCorrect = existingStats.totalWordsCorrect + result.wordsCorrect;
-
-          s.streakCurrent = result.won ? existingStats.streakCurrent + 1 : 0;
-
-          s.streakBest = Math.max(
+          // Use _raw.column_name pattern for reliable persistence
+          // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.total_games_played = existingStats.totalGamesPlayed + 1;
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.total_wins = existingStats.totalWins + (result.won ? 1 : 0);
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.total_words_attempted = existingStats.totalWordsAttempted + result.wordsAttempted;
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.total_words_correct = existingStats.totalWordsCorrect + result.wordsCorrect;
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.streak_current = result.won ? existingStats.streakCurrent + 1 : 0;
+          // @ts-expect-error - WatermelonDB _raw setters not typed
+          s._raw.streak_best = Math.max(
             existingStats.streakBest,
             result.won ? existingStats.streakCurrent + 1 : 0
           );
           if (result.trophy) {
             const trophyCounts = { ...existingStats.trophyCounts };
             trophyCounts[result.trophy] = (trophyCounts[result.trophy] || 0) + 1;
-
-            s.trophyCounts = trophyCounts;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            s._raw.trophy_counts_json = JSON.stringify(trophyCounts);
           }
         });
       } else {
@@ -1153,6 +1267,16 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
             }
           }
 
+          // Compute next review time based on new mastery level
+          const nextReviewAt = computeNextReviewAt(newLevel, now);
+
+          // SAFETY NET: If word was played but has no introducedAt, set it now
+          // This catches any words that slipped through the introduction mechanism
+          const needsIntroducedAt = !wordRecord.introducedAtRaw;
+          if (needsIntroducedAt) {
+            console.warn(`[recordGame] Word "${wordRecord.wordText}" was played without introducedAt - fixing now`);
+          }
+
           await wordRecord.update(r => {
             // @ts-expect-error - WatermelonDB _raw setters not typed
             r._raw.mastery_level = newLevel;
@@ -1164,6 +1288,13 @@ export function useDatabase(childId: string, isOnline: boolean): UseDatabaseResu
             r._raw.times_correct = wordRecord.timesCorrect + (wasFirstTryCorrect ? 1 : 0);
             // @ts-expect-error - WatermelonDB _raw setters not typed
             r._raw.last_attempt_at = now;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            r._raw.next_review_at = nextReviewAt;
+            // Fix missing introducedAt if needed
+            if (needsIntroducedAt) {
+              // @ts-expect-error - WatermelonDB _raw setters not typed
+              r._raw.introduced_at = now;
+            }
           });
         }
       }
