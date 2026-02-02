@@ -1,8 +1,11 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect, useRef, useCallback } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import {
   Search,
   ChevronUp,
   ChevronDown,
+  ChevronLeft,
+  ChevronRight,
   Trash2,
   Archive,
   RotateCcw,
@@ -17,6 +20,13 @@ import { getWordState, WordState } from '@/utils/wordSelection';
 type SortField = 'word' | 'level' | 'accuracy' | 'attempts' | 'lastPracticed';
 type SortDirection = 'asc' | 'desc';
 type FilterState = 'all' | 'learning' | 'review' | 'mastered' | 'available' | 'archived';
+
+const PAGE_SIZE = 20;
+
+// Valid values for URL params
+const VALID_FILTERS: FilterState[] = ['all', 'learning', 'review', 'mastered', 'available', 'archived'];
+const VALID_SORT_FIELDS: SortField[] = ['word', 'level', 'accuracy', 'attempts', 'lastPracticed'];
+const VALID_SORT_DIRS: SortDirection[] = ['asc', 'desc'];
 
 interface WordManagementTableProps {
   words: Word[];
@@ -41,13 +51,92 @@ export function WordManagementTable({
   onExport,
   onWordClick,
 }: WordManagementTableProps) {
-  const [searchQuery, setSearchQuery] = useState('');
-  const [sortField, setSortField] = useState<SortField>('word');
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc');
-  const [filterState, setFilterState] = useState<FilterState>('all');
+  // URL search params for persistent state
+  const [searchParams, setSearchParams] = useSearchParams();
 
-  // Filter and sort words
-  const filteredWords = useMemo(() => {
+  // Read from URL params with defaults and validation
+  const page = Math.max(0, parseInt(searchParams.get('page') || '0', 10) || 0);
+  const filterState: FilterState = (() => {
+    const f = searchParams.get('filter');
+    return f && VALID_FILTERS.includes(f as FilterState) ? f as FilterState : 'all';
+  })();
+  const sortField: SortField = (() => {
+    const s = searchParams.get('sort');
+    return s && VALID_SORT_FIELDS.includes(s as SortField) ? s as SortField : 'word';
+  })();
+  const sortDirection: SortDirection = (() => {
+    const d = searchParams.get('dir');
+    return d && VALID_SORT_DIRS.includes(d as SortDirection) ? d as SortDirection : 'asc';
+  })();
+  const searchQuery = searchParams.get('q') || '';
+
+  // Search input state (synced from URL on mount, debounced to URL)
+  const [searchInput, setSearchInput] = useState(searchQuery);
+  const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Helper to update URL params (only sets non-default values)
+  const updateParams = useCallback((updates: {
+    page?: number;
+    filter?: FilterState;
+    sort?: SortField;
+    dir?: SortDirection;
+    q?: string;
+  }) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+
+      if (updates.page !== undefined) {
+        if (updates.page === 0) next.delete('page');
+        else next.set('page', String(updates.page));
+      }
+      if (updates.filter !== undefined) {
+        if (updates.filter === 'all') next.delete('filter');
+        else next.set('filter', updates.filter);
+      }
+      if (updates.sort !== undefined) {
+        if (updates.sort === 'word') next.delete('sort');
+        else next.set('sort', updates.sort);
+      }
+      if (updates.dir !== undefined) {
+        if (updates.dir === 'asc') next.delete('dir');
+        else next.set('dir', updates.dir);
+      }
+      if (updates.q !== undefined) {
+        if (updates.q === '') next.delete('q');
+        else next.set('q', updates.q);
+      }
+
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // Debounce search input to URL
+  useEffect(() => {
+    if (searchDebounceRef.current) {
+      clearTimeout(searchDebounceRef.current);
+    }
+    searchDebounceRef.current = setTimeout(() => {
+      if (searchInput !== searchQuery) {
+        updateParams({ q: searchInput, page: 0 });
+      }
+    }, 300);
+
+    return () => {
+      if (searchDebounceRef.current) {
+        clearTimeout(searchDebounceRef.current);
+      }
+    };
+  }, [searchInput, searchQuery, updateParams]);
+
+  // Sync search input when URL changes externally (e.g., browser back)
+  useEffect(() => {
+    if (searchQuery !== searchInput) {
+      setSearchInput(searchQuery);
+    }
+  }, [searchQuery]);
+
+  // Filter and sort words (without pagination)
+  const filteredAndSortedWords = useMemo(() => {
     let result = [...words];
 
     // Apply search
@@ -106,13 +195,35 @@ export function WordManagementTable({
     return result;
   }, [words, searchQuery, sortField, sortDirection, filterState]);
 
+  // Pagination calculations
+  const totalFilteredWords = filteredAndSortedWords.length;
+  const totalPages = Math.ceil(totalFilteredWords / PAGE_SIZE);
+  // Clamp page to valid range
+  const validPage = Math.min(page, Math.max(0, totalPages - 1));
+
+  // Apply pagination
+  const filteredWords = useMemo(() => {
+    const startIndex = validPage * PAGE_SIZE;
+    return filteredAndSortedWords.slice(startIndex, startIndex + PAGE_SIZE);
+  }, [filteredAndSortedWords, validPage]);
+
+  // Reset page to 0 if current page is out of bounds (happens when filter reduces results)
+  useEffect(() => {
+    if (page > 0 && page >= totalPages && totalPages > 0) {
+      updateParams({ page: 0 });
+    }
+  }, [page, totalPages, updateParams]);
+
   const handleSort = (field: SortField) => {
     if (sortField === field) {
-      setSortDirection(d => d === 'asc' ? 'desc' : 'asc');
+      updateParams({ dir: sortDirection === 'asc' ? 'desc' : 'asc', page: 0 });
     } else {
-      setSortField(field);
-      setSortDirection('asc');
+      updateParams({ sort: field, dir: 'asc', page: 0 });
     }
+  };
+
+  const handleFilterChange = (newFilter: FilterState) => {
+    updateParams({ filter: newFilter, page: 0 });
   };
 
   const SortIcon = ({ field }: { field: SortField }) => {
@@ -187,8 +298,8 @@ export function WordManagementTable({
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
                 <input
                   type="text"
-                  value={searchQuery}
-                  onChange={e => setSearchQuery(e.target.value)}
+                  value={searchInput}
+                  onChange={e => setSearchInput(e.target.value)}
                   placeholder="Search words..."
                   className="w-full pl-10 pr-4 py-2 border border-gray-200 rounded-lg text-sm
                            focus:border-blue-500 focus:ring-1 focus:ring-blue-200 outline-none"
@@ -199,7 +310,7 @@ export function WordManagementTable({
               <div className="relative">
                 <select
                   value={filterState}
-                  onChange={e => setFilterState(e.target.value as FilterState)}
+                  onChange={e => handleFilterChange(e.target.value as FilterState)}
                   className="appearance-none pl-10 pr-8 py-2 border border-gray-200 rounded-lg text-sm
                            focus:border-blue-500 focus:ring-1 focus:ring-blue-200 outline-none bg-white"
                 >
@@ -373,9 +484,38 @@ export function WordManagementTable({
             </table>
           </div>
 
-          {/* Footer with count */}
-          <div className="px-5 py-3 border-t border-gray-100 bg-gray-50 text-sm text-gray-500">
-            Showing {filteredWords.length} of {words.length} words
+          {/* Footer with pagination */}
+          <div className="flex items-center justify-between px-4 py-3 border-t border-gray-100 bg-gray-50">
+            <span className="text-sm text-gray-500">
+              {totalFilteredWords === 0
+                ? 'No words'
+                : totalPages > 1
+                  ? `Page ${validPage + 1} of ${totalPages} (${totalFilteredWords} words${searchQuery ? ` matching "${searchQuery}"` : ''})`
+                  : `${totalFilteredWords} word${totalFilteredWords !== 1 ? 's' : ''}${searchQuery ? ` matching "${searchQuery}"` : ''}`}
+            </span>
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => updateParams({ page: Math.max(0, validPage - 1) })}
+                  disabled={validPage === 0}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Previous page"
+                >
+                  <ChevronLeft size={18} />
+                </button>
+                <span className="text-sm text-gray-600 min-w-[60px] text-center">
+                  {validPage + 1} / {totalPages}
+                </span>
+                <button
+                  onClick={() => updateParams({ page: Math.min(totalPages - 1, validPage + 1) })}
+                  disabled={validPage >= totalPages - 1}
+                  className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                  title="Next page"
+                >
+                  <ChevronRight size={18} />
+                </button>
+              </div>
+            )}
           </div>
     </div>
   );
