@@ -73,6 +73,9 @@ This separation exists because:
 | `supabase/migrations/012_fix_push_changes_jsonb.sql` | JSON concatenation fix |
 | `supabase/migrations/018_get_record_keys.sql` | RPC for orphan detection |
 | `supabase/migrations/022_word_catalog_sync.sql` | RPC for word catalog sync |
+| `supabase/migrations/030_simplified_push_changes.sql` | Event-sourced push_changes |
+| `supabase/migrations/031_fix_introduced_at_update.sql` | Fix introduced_at in UPDATE path |
+| `supabase/migrations/035_fix_mastery_computation.sql` | Fix DISTINCT ON NULL session_id bug in compute_word_mastery |
 
 ## Sync Tables
 
@@ -394,6 +397,31 @@ COALESCE(p_changes->'foo', '[]'::json) || COALESCE(p_changes->'bar', '[]'::json)
 COALESCE((p_changes->'foo')::jsonb, '[]'::jsonb) || COALESCE((p_changes->'bar')::jsonb, '[]'::jsonb)
 ```
 
+### PostgreSQL DISTINCT ON with NULL Values
+
+**Critical Bug**: `DISTINCT ON (column)` treats **all NULL values as equal**, collapsing multiple rows into one.
+
+```sql
+-- ❌ BUG: If session_id is always NULL, this returns only ONE row!
+SELECT DISTINCT ON (session_id) * FROM child_word_attempts
+WHERE child_id = p_child_id AND LOWER(word_text) = LOWER(p_word_text)
+ORDER BY session_id, attempted_at ASC;
+
+-- With data like:
+-- session_id | word_text | was_correct
+-- NULL       | beautiful | true
+-- NULL       | beautiful | true
+-- NULL       | beautiful | true
+-- Result: Only 1 row returned (all NULLs collapse)
+
+-- ✅ FIX: Remove DISTINCT ON if the grouping column is nullable and often NULL
+SELECT * FROM child_word_attempts
+WHERE child_id = p_child_id AND LOWER(word_text) = LOWER(p_word_text)
+ORDER BY attempted_at ASC;
+```
+
+**This caused the mastery computation bug** where a word with 3 correct attempts showed mastery level 1 instead of 3. Fixed in migration `035_fix_mastery_computation.sql`.
+
 ### Backfill Migration Timestamps
 
 When writing migrations that backfill historical data into synced tables, **set `created_at` to the actual event time, not `NOW()`**.
@@ -417,12 +445,14 @@ VALUES (..., v_session.played_at);  -- or attempted_at, etc.
 ### Console Logs
 
 ```
-[Sync] Starting sync for child: abc-123
-[Sync] Pulling changes since: 2024-01-15T10:30:00.000Z
-[Sync] Pulled data: {wordProgress: 24, gameSessions: 5, statistics: 1, calibration: 1}
-[Sync] word_progress reconciled: 0 created, 24 updated
-[Sync] Pushing changes
-[Sync] Push result: {success: true, synced_at: "2024-01-15T10:35:00.000Z"}
+[Sync] Starting parent-level sync for: parent-uuid children: 2
+[Sync] Has unsynced changes: false
+[Sync] Pulling changes since: 1705315800000
+[Sync] Forcing full pull - children have no local data: ["child-uuid-abc"]
+[Sync] Pulled data: {wordProgress: 24, gameSessions: 5, statistics: 1, calibration: 1, wordAttempts: 50}
+[Sync] word_progress reconciled: 24 created, 0 updated
+[Sync] Pushing changes (statistics=pull-only): {...}
+[Sync] Push result: {success: true, synced_at: "2024-01-15T10:35:00.000Z", architecture: "event-sourced"}
 [Sync] Sync completed successfully
 ```
 
@@ -444,6 +474,9 @@ VALUES (..., v_session.played_at);  -- or attempted_at, etc.
 | Word catalog shows 0 local words | Catalog never synced or sync failed | Click "Sync Word Catalog" in sync panel; check console for RPC errors |
 | Custom words not appearing in catalog | Sync hasn't run since word was created | `insertCustomWord()` auto-triggers sync; manual sync if needed |
 | Word definitions missing during gameplay | Local catalog empty, using fallback files | Normal on first launch; definitions from GRADE_WORDS files used as fallback |
+| New child on Device A, Device B gets 0 records | Parent-level `lastPulledAt` doesn't detect per-child "first sync" | Fixed in sync.ts: `getChildrenNeedingFullSync()` forces full pull for children with no local data |
+| Words show "Coming Soon" after sync on other device | `introduced_at` not included in UPDATE path of `push_changes` | Fixed in migration 031_fix_introduced_at_update.sql |
+| Mastery always 1 despite multiple correct attempts | `compute_word_mastery()` uses `DISTINCT ON (session_id)` but `session_id` is always NULL (never passed), so PostgreSQL treats all NULLs as equal and collapses all attempts into one row | Fixed in migration 035_fix_mastery_computation.sql - removes DISTINCT ON clause |
 
 ### Force Re-sync
 

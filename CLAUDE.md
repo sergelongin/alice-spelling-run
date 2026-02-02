@@ -128,8 +128,26 @@ The app uses WatermelonDB for offline-first local storage with Supabase sync.
 **Key Files:**
 - `src/db/schema.ts` - WatermelonDB schema definition
 - `src/db/models.ts` - Model classes
-- `src/db/sync.ts` - Sync adapter with custom reconciliation
+- `src/db/sync.ts` - Parent-level sync adapter with business-key reconciliation
 - `src/db/transforms.ts` - Data transformers between WatermelonDB and Supabase
+
+**Parent-Level Sync Architecture:**
+- `syncWithSupabaseForParent(parentId, childIds)` syncs ALL children in one operation
+- Uses WatermelonDB's native `lastPulledAt` timestamp (no per-child tracking needed)
+- One database per parent, containing all children's data
+- One sync operation pulls/pushes data for all children at once
+- Eliminates per-child timestamp workarounds that fought WatermelonDB's design
+
+**Event-Sourced Architecture (Phase 2-3):**
+Server computes derived state from events - no bidirectional sync needed:
+- `game_sessions`, `word_attempts`, `calibration`: INSERT-only events (pushed to server)
+- `statistics`: Computed from `game_sessions` via `computed_child_statistics` view (pull-only)
+- `word_progress` mastery: Computed from `word_attempts` via `computed_word_mastery` view (pull-only)
+- `word_progress` metadata: Pushed (introduced_at, is_active, archived_at)
+- `learning_progress`: Computed from `word_attempts` via `computed_child_learning_progress` view (pull-only)
+  - Points: 10 points for first-try correct, 5 points for retry correct
+  - Uses MAX(computed, stored) to never lose bonus points
+- `grade_progress`: Push/pull with MAX for points, LWW for milestones
 
 **Sync Protocol Rules:**
 - `pullChanges()` must return raw records **without** `_status` or `_changed` fields
@@ -166,16 +184,23 @@ The sync uses business-key reconciliation instead of ID matching because client 
 | `operator does not exist: json \|\| json` | Using `\|\|` concatenation on `json` type | Cast to `jsonb` before concatenation (see PostgreSQL JSON vs JSONB) |
 | Cross-child data pollution (Child A's data appears in Child B) | Old RPC uses `p_child_id` param for all inserts | Apply migration `024_push_uses_record_child_id.sql` - RPC now uses record's `child_id` |
 | Word detail shows "No attempts" despite practice | `attempt_history_json` JSONB field was never synced | Use `word_attempts` table instead; `migrateLocalAttemptHistory()` salvages local data |
+| New child on Device B gets 0 records after sync | Parent-level `lastPulledAt` doesn't detect per-child "first sync" | Fixed: `getChildrenNeedingFullSync()` in sync.ts forces full pull for children with no local data |
+| Words show "Coming Soon" on other device after sync | `introduced_at` missing from UPDATE path in `push_changes` | Fixed in migration `031_fix_introduced_at_update.sql` |
+| word_progress/learning_progress stale on multi-device | Computed mastery changes but `updated_at` timestamp doesn't update | Fixed in migration `032_sync_timestamp_triggers.sql` - trigger updates `word_progress.updated_at` when `word_attempts` inserted |
+| Points out of sync between devices | Bidirectional learning_progress sync with timestamp conflicts | Fixed in migration `033_computed_learning_progress.sql` - points now computed from `word_attempts` via `computed_child_learning_progress` view |
+| Word mastery (mastery_level, times_used) not syncing | Migration 033 reverted word_progress to use stored table instead of computed_word_mastery view | Fixed in migration `034_fix_word_mastery_sync.sql` - restores computed view + adds trigger to keep stored values in sync |
+| Mastery always 1 despite multiple correct attempts | `compute_word_mastery()` uses `DISTINCT ON (session_id)` but session_id is always NULL, so all attempts collapse into one row | Fixed in migration `035_fix_mastery_computation.sql` - removes DISTINCT ON clause |
 
 **JSONB Fields Don't Auto-Sync:**
 JSONB fields (like `attempt_history_json`) require explicit handling in transforms.ts and RPC functions. If a JSONB field is missing from transforms, it silently fails to sync with no errors. **Prefer normalized tables for append-only data** (attempts, sessions, events) - they sync automatically via standard table handling.
 
 **Supabase RPC Functions:**
-- `pull_changes(p_child_id, p_last_pulled_at)` - Returns all data updated since timestamp
+- `pull_changes_for_parent(p_parent_id, p_last_pulled_at)` - Returns ALL children's data in one query (preferred)
+- `pull_changes(p_child_id, p_last_pulled_at)` - Legacy: Returns data for one child
 - `push_changes(p_child_id, p_changes)` - Processes client changes with conflict resolution
   - Uses each record's `child_id` (not `p_child_id`) for inserts/updates
   - Validates parent ownership of each child_id before processing
-- Defined in `supabase/migrations/009_watermelon_sync.sql` (updated in `024_push_uses_record_child_id.sql`)
+- Defined in `supabase/migrations/009_watermelon_sync.sql`, `024_push_uses_record_child_id.sql`, `027_parent_level_sync.sql`, `030_simplified_push_changes.sql`, `031_fix_introduced_at_update.sql`, `032_sync_timestamp_triggers.sql`, `033_computed_learning_progress.sql`, `034_fix_word_mastery_sync.sql`, `035_fix_mastery_computation.sql`
 
 ### Supabase (Database & Auth)
 
