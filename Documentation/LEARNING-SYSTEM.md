@@ -127,6 +127,30 @@ Different word addition methods have different introduction behaviors:
 - **Gradual introduction** (`introducedAt = null`): Used when bulk-adding curriculum words. The spaced repetition system controls when words enter rotation, preventing overwhelm.
 - **Immediate introduction** (`introducedAt = now`): Used when parent explicitly adds specific words for practice. These are high-priority words the child needs to learn now (e.g., this week's spelling list).
 
+#### How `introducedAt` Is Determined
+
+The `introducedAt` timestamp follows **event-sourced architecture** for multi-device consistency:
+
+| Path | How `introducedAt` is set | Source of truth |
+|------|---------------------------|-----------------|
+| **Child plays word** | Computed from earliest `word_attempts` timestamp | Server computes |
+| **Parent introduces via UI** | Set directly in database | Stored value |
+
+**Server Computation (migration 037)**:
+```sql
+-- If word has been attempted, it HAS been introduced
+-- introducedAt = MIN(attempted_at) from word_attempts
+COALESCE(cm.introduced_at, wp.introduced_at) AS introduced_at
+```
+
+This means:
+- When a child plays a word, the attempt syncs to server
+- Server trigger computes `introducedAt` = earliest attempt timestamp
+- Other devices pull the computed value
+- **No "Coming Soon" inconsistency across devices**
+
+For parent-introduced words (not yet practiced), the stored `introducedAt` value is used as fallback.
+
 ### 2. Struggling Cap
 
 When 15 or more words are at level 0-1:

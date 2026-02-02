@@ -784,3 +784,114 @@ const { words, findWord, getWordsForGrade, isFallback } = useWordCatalog();
 1. **Latest wins**: Most recent action is user's intent
 2. **Simple resolution**: No complex merge logic needed
 3. **Predictable**: User can understand the behavior
+
+---
+
+## Event-Sourced Architecture Checklist
+
+### The Golden Rule
+
+**If a field can be derived from INSERT-only event tables, compute it server-side.**
+
+The app uses event-sourced architecture where derived state is computed from immutable events:
+
+| Event Table | Derived State |
+|-------------|---------------|
+| `word_attempts` | `mastery_level`, `correct_streak`, `times_used`, `times_correct`, `last_attempt_at`, `next_review_at`, `introduced_at` |
+| `game_sessions` | `total_games_played`, `total_wins`, `streak_current`, `streak_best`, `trophy_counts` |
+| `word_attempts` | `total_lifetime_points` (learning_progress) |
+
+### Field Classification Decision Tree
+
+When adding a new field, ask these questions:
+
+```
+1. Can this be computed from existing events?
+   └─ YES → Compute server-side (add to view/trigger)
+   └─ NO → Continue to #2
+
+2. Is this an event/fact that happened?
+   └─ YES → INSERT-only table with client-generated ID
+            (e.g., game_sessions, word_attempts, calibration)
+   └─ NO → Continue to #3
+
+3. Is this a counter that should never decrease?
+   └─ YES → Use MAX merge strategy
+   └─ NO → Continue to #4
+
+4. Is this user-sourced metadata/preference?
+   └─ YES → Bidirectional sync with LWW
+            (e.g., is_active, archived_at, display preferences)
+```
+
+### Anti-Pattern: Client-Sourced Derived Fields
+
+**❌ DON'T**: Set derived fields client-side and sync bidirectionally.
+
+This was the bug with `introduced_at`:
+- Client set `introduced_at` when word entered rotation
+- Client pushed to server, other devices pulled
+- BUT: Sync timing, conflicts, and "local wins" logic caused inconsistencies
+- Result: Device B saw words as "Coming Soon" that Device A had practiced
+
+**✅ DO**: Compute derived fields server-side from events.
+
+The fix for `introduced_at`:
+- Server computes `introduced_at = MIN(attempted_at)` from `word_attempts`
+- If a word has been attempted, it HAS been introduced
+- Trigger updates stored table when attempts sync
+- All devices get consistent computed value
+
+### Implementation Pattern for Computed Fields
+
+1. **Add to compute function** (e.g., `compute_word_mastery()`):
+   ```sql
+   SELECT MIN(attempted_at) INTO v_introduced_at
+   FROM child_word_attempts
+   WHERE child_id = p_child_id AND LOWER(word_text) = LOWER(p_word_text);
+   ```
+
+2. **Add to view** with fallback for metadata-only records:
+   ```sql
+   -- Computed value takes precedence, stored value is fallback
+   COALESCE(cm.introduced_at, wp.introduced_at) AS introduced_at
+   ```
+
+3. **Add to trigger** to sync computed value to stored table:
+   ```sql
+   UPDATE child_word_progress SET
+     introduced_at = COALESCE(v_mastery.introduced_at, introduced_at),
+     updated_at = NOW()
+   WHERE ...;
+   ```
+
+4. **Remove client-side "local wins" logic** - server is authoritative.
+
+### Sync Strategy Reference
+
+| Field Type | Example | Sync Direction | Merge Strategy |
+|------------|---------|----------------|----------------|
+| Computed from events | `mastery_level`, `introduced_at` | Pull-only | Server computes |
+| Event record | `word_attempts`, `game_sessions` | Push (insert-only) | ON CONFLICT DO NOTHING |
+| Counter | `times_used`, `total_games_played` | Bidirectional | MAX |
+| State/preference | `is_active`, `archived_at` | Bidirectional | LWW |
+| Metadata (no events yet) | `introduced_at` (parent UI) | Bidirectional | LWW (fallback) |
+
+### Client-Side Implications
+
+When a field becomes server-computed:
+
+1. **Remove proactive client-side setting** (e.g., `markWordsAsIntroduced()` before gameplay)
+2. **Keep safety net in record functions** for immediate local UI feedback
+3. **Remove "local wins" logic in sync** - trust server value
+4. **Document the computation** in CLAUDE.md sync errors table
+
+### Testing Multi-Device Sync
+
+Always test computed fields across devices:
+
+1. Device A: Perform action that generates events (e.g., play game)
+2. Device A: Sync to server
+3. Device B: Sync from server
+4. Device B: Verify computed field has correct value
+5. Check: Both devices show same state for the record

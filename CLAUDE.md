@@ -143,17 +143,69 @@ Server computes derived state from events - no bidirectional sync needed:
 - `game_sessions`, `word_attempts`, `calibration`: INSERT-only events (pushed to server)
 - `statistics`: Computed from `game_sessions` via `computed_child_statistics` view (pull-only)
 - `word_progress` mastery: Computed from `word_attempts` via `computed_word_mastery` view (pull-only)
-- `word_progress` metadata: Pushed (introduced_at, is_active, archived_at)
+- `word_progress.introduced_at`: Computed from earliest `word_attempts` timestamp (migration 037)
+  - If a word has been attempted, it has been introduced
+  - Falls back to stored value for parent-introduced words (not yet practiced)
+- `word_progress` metadata: Pushed (is_active, archived_at)
 - `learning_progress`: Computed from `word_attempts` via `computed_child_learning_progress` view (pull-only)
   - Points: 10 points for first-try correct, 5 points for retry correct
   - Uses MAX(computed, stored) to never lose bonus points
 - `grade_progress`: Push/pull with MAX for points, LWW for milestones
+
+**CRITICAL: New Field Checklist (Prevent Sync Bugs)**
+
+Before adding a new synced field, ask:
+
+1. **Can this be computed from events?** (word_attempts, game_sessions)
+   - YES → Add to server-side `compute_*` function + trigger, NOT client-side
+   - Example: `introduced_at` = MIN(attempted_at) from word_attempts
+
+2. **Is this an immutable event/fact?**
+   - YES → INSERT-only table with `client_*_id` for deduplication
+   - Example: `word_attempts`, `game_sessions`
+
+3. **Is this a counter that should never decrease?**
+   - YES → Use MAX merge strategy in push_changes RPC
+   - Example: `times_used`, `total_games_played`
+
+4. **Is this user metadata/preference?**
+   - YES → Bidirectional sync with LWW (Last-Write-Wins)
+   - Example: `is_active`, `archived_at`
+
+**Anti-Pattern**: Setting derived fields client-side then syncing bidirectionally causes multi-device inconsistencies. If a field can be derived from events, compute it server-side.
+
+See `Documentation/SYNC-ARCHITECTURE.md` for full checklist and implementation patterns.
 
 **Sync Protocol Rules:**
 - `pullChanges()` must return raw records **without** `_status` or `_changed` fields
 - WatermelonDB manages these internal fields automatically during sync
 - Never add `_status: 'synced'` or `_changed: ''` to transform functions
 - `synchronize()` does NOT need `migrationsEnabledAtVersion` unless using WatermelonDB migrations
+
+**WatermelonDB Record Update Pattern (CRITICAL):**
+Due to Vite/esbuild decorator transpilation issues, decorated property setters may not persist values to the database. Always use `r._raw.column_name` instead of decorated property setters when updating records:
+
+```typescript
+// ✅ CORRECT - Direct _raw access always works
+await record.update(r => {
+  // @ts-expect-error - WatermelonDB _raw setters not typed
+  r._raw.introduced_at = now;
+  // @ts-expect-error - WatermelonDB _raw setters not typed
+  r._raw.is_active = true;
+});
+
+// ❌ MAY NOT WORK - Decorated setters may silently fail
+await record.update(r => {
+  r.introducedAtRaw = now;  // Value may not persist!
+  r.isActive = true;        // Value may not persist!
+});
+```
+
+**Why this happens:**
+- WatermelonDB uses `@field` decorators that create setters calling `_setRaw` internally
+- Vite uses esbuild which has [known issues with decorator transpilation](https://github.com/vitejs/vite-plugin-react/issues/314)
+- The decorated setters appear to work (no errors thrown) but values don't persist to the database
+- Direct `_raw` access bypasses the decorator layer entirely
 
 **Multi-User Database Architecture:**
 - WatermelonDB `synchronize()` operates on the **ENTIRE database**, not per-user
@@ -190,6 +242,9 @@ The sync uses business-key reconciliation instead of ID matching because client 
 | Points out of sync between devices | Bidirectional learning_progress sync with timestamp conflicts | Fixed in migration `033_computed_learning_progress.sql` - points now computed from `word_attempts` via `computed_child_learning_progress` view |
 | Word mastery (mastery_level, times_used) not syncing | Migration 033 reverted word_progress to use stored table instead of computed_word_mastery view | Fixed in migration `034_fix_word_mastery_sync.sql` - restores computed view + adds trigger to keep stored values in sync |
 | Mastery always 1 despite multiple correct attempts | `compute_word_mastery()` uses `DISTINCT ON (session_id)` but session_id is always NULL, so all attempts collapse into one row | Fixed in migration `035_fix_mastery_computation.sql` - removes DISTINCT ON clause |
+| "X words waiting" count never changes after practice | `next_review_at` was never computed/updated - all words perpetually "due" | Fixed in migration `036_compute_next_review_at.sql` - computes `next_review_at` using Leitner intervals |
+| Words stuck as "Coming Soon" despite being practiced | `wordsToIntroduce` is empty when word selection can fill session from introduced words, so available words that get played are never marked as introduced | Fixed in `GameScreen.tsx:initializeGame()` - now ensures ALL played available words get introduced, plus `recordGame()` has a safety net to fix any that slip through |
+| Words "Coming Soon" on Device B after Device A plays | `introduced_at` is client-sourced field requiring bidirectional sync - doesn't match event-sourced architecture | Fixed in migration `037_compute_introduced_at.sql` - `introduced_at` now computed from earliest `word_attempts` timestamp (event-sourced approach) |
 
 **JSONB Fields Don't Auto-Sync:**
 JSONB fields (like `attempt_history_json`) require explicit handling in transforms.ts and RPC functions. If a JSONB field is missing from transforms, it silently fails to sync with no errors. **Prefer normalized tables for append-only data** (attempts, sessions, events) - they sync automatically via standard table handling.
@@ -200,7 +255,7 @@ JSONB fields (like `attempt_history_json`) require explicit handling in transfor
 - `push_changes(p_child_id, p_changes)` - Processes client changes with conflict resolution
   - Uses each record's `child_id` (not `p_child_id`) for inserts/updates
   - Validates parent ownership of each child_id before processing
-- Defined in `supabase/migrations/009_watermelon_sync.sql`, `024_push_uses_record_child_id.sql`, `027_parent_level_sync.sql`, `030_simplified_push_changes.sql`, `031_fix_introduced_at_update.sql`, `032_sync_timestamp_triggers.sql`, `033_computed_learning_progress.sql`, `034_fix_word_mastery_sync.sql`, `035_fix_mastery_computation.sql`
+- Defined in `supabase/migrations/009_watermelon_sync.sql`, `024_push_uses_record_child_id.sql`, `027_parent_level_sync.sql`, `030_simplified_push_changes.sql`, `031_fix_introduced_at_update.sql`, `032_sync_timestamp_triggers.sql`, `033_computed_learning_progress.sql`, `034_fix_word_mastery_sync.sql`, `035_fix_mastery_computation.sql`, `036_compute_next_review_at.sql`, `037_compute_introduced_at.sql`
 
 ### Supabase (Database & Auth)
 
