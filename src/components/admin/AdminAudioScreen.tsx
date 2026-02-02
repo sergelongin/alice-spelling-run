@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { Volume2, Loader2, RefreshCw, Filter, Plus, AlertCircle, Search, ChevronLeft, ChevronRight } from 'lucide-react';
 import { useAdminAudioGenerator } from '@/hooks/useAdminAudioGenerator';
 import { useSupabaseAudio } from '@/hooks/useSupabaseAudio';
@@ -27,28 +28,112 @@ interface WordWithGrade extends WordDefinition {
   id?: string;
 }
 
+// Module-level cache for data freshness AND data (survives remounts)
+// This prevents refetching when returning to tab triggers auth re-render
+// Also restores cached data on remount to prevent empty table flicker
+interface WordsCache {
+  key: string;
+  time: number;
+  words: WordWithGrade[];
+  totalPages: number;
+  totalWords: number;
+}
+let wordsLoadCache: WordsCache | null = null;
+const FRESH_DATA_THRESHOLD = 5000; // 5 seconds
+
 const PAGE_SIZE = 50;
 
+// Helper to get cache key from URL params (for lazy state initialization)
+// This allows synchronous cache lookup during useState initialization
+function getCacheKeyFromUrl(): string {
+  const params = new URLSearchParams(window.location.search);
+  const page = parseInt(params.get('page') || '0', 10);
+  const grade = params.get('grade') || 'all';
+  const q = params.get('q') || '';
+  return `${grade}-${page}-${q}`;
+}
+
 export function AdminAudioScreen() {
-  const [gradeFilter, setGradeFilter] = useState<GradeFilter>('all');
-  const [words, setWords] = useState<WordWithGrade[]>([]);
+  // URL search params for persistent state
+  const [searchParams, setSearchParams] = useSearchParams();
+
+  // Read from URL params with defaults
+  const page = parseInt(searchParams.get('page') || '0', 10);
+  const gradeFilter: GradeFilter = (() => {
+    const g = searchParams.get('grade');
+    if (!g || g === 'all') return 'all';
+    const num = parseInt(g, 10);
+    return [3, 4, 5, 6].includes(num) ? num as GradeLevel : 'all';
+  })();
+  const searchQuery = searchParams.get('q') || '';
+
+  // Helper to update URL params
+  const updateParams = useCallback((updates: { page?: number; grade?: GradeFilter; q?: string }) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+
+      if (updates.page !== undefined) {
+        if (updates.page === 0) next.delete('page');
+        else next.set('page', String(updates.page));
+      }
+      if (updates.grade !== undefined) {
+        if (updates.grade === 'all') next.delete('grade');
+        else next.set('grade', String(updates.grade));
+      }
+      if (updates.q !== undefined) {
+        if (updates.q === '') next.delete('q');
+        else next.set('q', updates.q);
+      }
+
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  // Initialize from cache if available (prevents flash on remount)
+  const [words, setWords] = useState<WordWithGrade[]>(() => {
+    const key = getCacheKeyFromUrl();
+    if (wordsLoadCache && wordsLoadCache.key === key) {
+      return wordsLoadCache.words;
+    }
+    return [];
+  });
   const [audioSegments, setAudioSegments] = useState<Map<string, AudioPronunciation>>(new Map());
-  const [isLoading, setIsLoading] = useState(true);
+  // Separate loading states to prevent flash when only audio needs refresh
+  const [isLoadingWords, setIsLoadingWords] = useState(() => {
+    const key = getCacheKeyFromUrl();
+    // Not loading if we have cached data for current URL
+    return !(wordsLoadCache && wordsLoadCache.key === key);
+  });
+  const [isLoadingAudio, setIsLoadingAudio] = useState(false);
   const [dataError, setDataError] = useState<string | null>(null);
   const [playingSegment, setPlayingSegment] = useState<string | null>(null);
   const [isAddModalOpen, setIsAddModalOpen] = useState(false);
   const [selectedWord, setSelectedWord] = useState<string | null>(null);
   const [audioPreviewWord, setAudioPreviewWord] = useState<AddedWordData | null>(null);
 
-  // Pagination state
-  const [page, setPage] = useState(0);
-  const [totalPages, setTotalPages] = useState(0);
-  const [totalWords, setTotalWords] = useState(0);
+  // Pagination state (only totalPages/totalWords are local - page is in URL)
+  // Also initialize from cache to prevent flash
+  const [totalPages, setTotalPages] = useState(() => {
+    const key = getCacheKeyFromUrl();
+    if (wordsLoadCache && wordsLoadCache.key === key) {
+      return wordsLoadCache.totalPages;
+    }
+    return 0;
+  });
+  const [totalWords, setTotalWords] = useState(() => {
+    const key = getCacheKeyFromUrl();
+    if (wordsLoadCache && wordsLoadCache.key === key) {
+      return wordsLoadCache.totalWords;
+    }
+    return 0;
+  });
 
-  // Search state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchInput, setSearchInput] = useState('');
+  // Search input state (synced from URL on mount, debounced to URL)
+  const [searchInput, setSearchInput] = useState(searchQuery);
   const searchDebounceRef = useRef<NodeJS.Timeout | null>(null);
+
+  // Track last auto-played word to prevent replays
+  const lastAutoPlayedWordRef = useRef<string | null>(null);
 
   // Track recently regenerated segments for cache busting
   // Map of "word:segmentType" -> timestamp
@@ -94,8 +179,25 @@ export function AdminAudioScreen() {
   }, []);
 
   // Load words from Supabase with pagination and server-side filtering
-  const loadWords = useCallback(async () => {
-    setIsLoading(true);
+  const loadWords = useCallback(async (force = false) => {
+    const filterKey = `${gradeFilter}-${page}-${searchQuery}`;
+    const now = Date.now();
+
+    // Check if we have fresh cached data for this filter key
+    // This handles tab-return where auth triggers remount but data is fresh
+    if (!force &&
+        wordsLoadCache &&
+        filterKey === wordsLoadCache.key &&
+        now - wordsLoadCache.time < FRESH_DATA_THRESHOLD) {
+      // Restore cached data and reset loading state (critical for remount case)
+      setWords(wordsLoadCache.words);
+      setTotalPages(wordsLoadCache.totalPages);
+      setTotalWords(wordsLoadCache.totalWords);
+      setIsLoadingWords(false);
+      return;
+    }
+
+    setIsLoadingWords(true);
     setDataError(null);
     try {
       const result = await getWordsPaginated({
@@ -113,15 +215,26 @@ export function AdminAudioScreen() {
         return;
       }
 
-      setWords(result.words.map(w => ({
+      const processedWords = result.words.map(w => ({
         word: w.word,
         definition: w.definition,
         example: w.example || undefined,
         grade: Number(w.grade_level),
         id: w.id,
-      })));
+      }));
+
+      setWords(processedWords);
       setTotalPages(result.totalPages);
       setTotalWords(result.total);
+
+      // Cache the data along with timestamp
+      wordsLoadCache = {
+        key: filterKey,
+        time: Date.now(),
+        words: processedWords,
+        totalPages: result.totalPages,
+        totalWords: result.total,
+      };
     } catch (err) {
       console.error('[AdminAudio] Error loading words:', err);
       setDataError('Failed to load words from database.');
@@ -129,7 +242,7 @@ export function AdminAudioScreen() {
       setTotalPages(0);
       setTotalWords(0);
     } finally {
-      setIsLoading(false);
+      setIsLoadingWords(false);
     }
   }, [gradeFilter, page, searchQuery]);
 
@@ -137,7 +250,7 @@ export function AdminAudioScreen() {
   const loadAudioStatus = useCallback(async () => {
     if (words.length === 0) return;
 
-    setIsLoading(true);
+    setIsLoadingAudio(true);
     try {
       const voiceId = getVoiceId();
       const wordStrings = words.map((w) => w.word);
@@ -146,7 +259,7 @@ export function AdminAudioScreen() {
     } catch (err) {
       console.error('[AdminAudio] Error loading status:', err);
     } finally {
-      setIsLoading(false);
+      setIsLoadingAudio(false);
     }
   }, [words]);
 
@@ -154,11 +267,6 @@ export function AdminAudioScreen() {
   useEffect(() => {
     loadGlobalStats();
   }, [loadGlobalStats]);
-
-  // Reset to page 0 when filter or search changes
-  useEffect(() => {
-    setPage(0);
-  }, [gradeFilter, searchQuery]);
 
   // Load words when component mounts or pagination/filter/search changes
   useEffect(() => {
@@ -170,13 +278,15 @@ export function AdminAudioScreen() {
     loadAudioStatus();
   }, [loadAudioStatus]);
 
-  // Debounce search input
+  // Debounce search input to URL
   useEffect(() => {
     if (searchDebounceRef.current) {
       clearTimeout(searchDebounceRef.current);
     }
     searchDebounceRef.current = setTimeout(() => {
-      setSearchQuery(searchInput);
+      if (searchInput !== searchQuery) {
+        updateParams({ q: searchInput, page: 0 });
+      }
     }, 300);
 
     return () => {
@@ -184,7 +294,7 @@ export function AdminAudioScreen() {
         clearTimeout(searchDebounceRef.current);
       }
     };
-  }, [searchInput]);
+  }, [searchInput, searchQuery, updateParams]);
 
   // Words are already filtered by server, just sort them for display
   const displayWords = useMemo(() => {
@@ -199,6 +309,34 @@ export function AdminAudioScreen() {
   const selectedWordIndex = selectedWord
     ? displayWords.findIndex(w => w.word === selectedWord)
     : -1;
+
+  // Auto-play word pronunciation when dialog opens or word changes
+  useEffect(() => {
+    if (!selectedWord || isPlaying) return;
+
+    // Only auto-play if this is a different word than we last played
+    if (lastAutoPlayedWordRef.current === selectedWord) return;
+
+    const normalized = normalizeWord(selectedWord);
+    const key = getSegmentKey(normalized, 'word');
+    const pronunciation = audioSegments.get(key);
+
+    if (pronunciation) {
+      lastAutoPlayedWordRef.current = selectedWord;
+      // Small delay to let the dialog render first
+      const timeout = setTimeout(() => {
+        handlePlaySegment(selectedWord, 'word');
+      }, 100);
+      return () => clearTimeout(timeout);
+    }
+  }, [selectedWord, audioSegments]);
+
+  // Reset auto-play tracking when dialog closes
+  useEffect(() => {
+    if (!selectedWord) {
+      lastAutoPlayedWordRef.current = null;
+    }
+  }, [selectedWord]);
 
   // Get segment status for a word
   const getWordSegments = useCallback(
@@ -364,14 +502,14 @@ export function AdminAudioScreen() {
 
   // Handle word added
   const handleWordAdded = (wordData: AddedWordData) => {
-    loadWords();
+    loadWords(true); // Force refresh to include the new word
     loadGlobalStats();
     setAudioPreviewWord(wordData); // Open audio preview modal
   };
 
   // Handle refresh
   const handleRefresh = () => {
-    loadWords();
+    loadWords(true); // Force refresh bypasses freshness check
     loadGlobalStats();
   };
 
@@ -466,11 +604,10 @@ export function AdminAudioScreen() {
               <Filter size={16} className="text-gray-400" />
               <select
                 value={gradeFilter}
-                onChange={(e) =>
-                  setGradeFilter(
-                    e.target.value === 'all' ? 'all' : (parseInt(e.target.value) as GradeLevel)
-                  )
-                }
+                onChange={(e) => {
+                  const val = e.target.value === 'all' ? 'all' : (parseInt(e.target.value) as GradeLevel);
+                  updateParams({ grade: val, page: 0 });
+                }}
                 className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500"
               >
                 {gradeOptions.map((opt) => (
@@ -484,11 +621,11 @@ export function AdminAudioScreen() {
             {/* Refresh button */}
             <button
               onClick={handleRefresh}
-              disabled={isLoading}
+              disabled={isLoadingWords}
               className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors"
               title="Refresh"
             >
-              <RefreshCw size={18} className={isLoading ? 'animate-spin' : ''} />
+              <RefreshCw size={18} className={isLoadingWords || isLoadingAudio ? 'animate-spin' : ''} />
             </button>
 
             {/* Generate all button */}
@@ -544,7 +681,7 @@ export function AdminAudioScreen() {
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-100">
-              {isLoading ? (
+              {isLoadingWords ? (
                 <tr>
                   <td colSpan={4} className="px-4 py-8 text-center text-gray-500">
                     <Loader2 size={24} className="animate-spin mx-auto mb-2" />
@@ -604,8 +741,8 @@ export function AdminAudioScreen() {
             </div>
             <div className="flex items-center gap-2">
               <button
-                onClick={() => setPage(p => Math.max(0, p - 1))}
-                disabled={page === 0 || isLoading}
+                onClick={() => updateParams({ page: Math.max(0, page - 1) })}
+                disabled={page === 0 || isLoadingWords}
                 className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Previous page"
               >
@@ -615,8 +752,8 @@ export function AdminAudioScreen() {
                 {page + 1} / {totalPages}
               </span>
               <button
-                onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))}
-                disabled={page >= totalPages - 1 || isLoading}
+                onClick={() => updateParams({ page: Math.min(totalPages - 1, page + 1) })}
+                disabled={page >= totalPages - 1 || isLoadingWords}
                 className="p-2 text-gray-600 hover:text-gray-900 hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
                 title="Next page"
               >
