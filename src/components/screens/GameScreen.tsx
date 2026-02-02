@@ -23,7 +23,7 @@ import { useWordCatalog } from '@/hooks/useWordCatalog';
 export function GameScreen() {
   const navigate = useNavigate();
   const location = useLocation();
-  const { wordBank, recordGame, markWordsAsIntroduced, recordWordAttempt, syncNow } = useGameContext();
+  const { wordBank, recordGame, recordWordAttempt, syncNow } = useGameContext();
   const { speak, isSupported: ttsSupported } = useTextToSpeech();
 
   // Get mode from route state, default to savannah
@@ -141,22 +141,39 @@ export function GameScreen() {
       return;
     }
 
-    const { words, wordsToIntroduce } = selectWordsForSessionDetailed(
-      wordBank.words,
-      modeConfig.maxWordsPerSession
-    );
-    if (words.length < 5) {
-      navigate('/');
-      return;
-    }
-    // Mark any newly introduced words (transitioning from "Available" to "Learning")
-    if (wordsToIntroduce.length > 0) {
-      markWordsAsIntroduced(wordsToIntroduce);
-    }
-    startGame(words, modeConfig);
-    gameInitializedRef.current = true;
-    // Reset recording guard for new game
-    hasRecordedGameRef.current = false;
+    const initializeGame = async () => {
+      const { words } = selectWordsForSessionDetailed(
+        wordBank.words,
+        modeConfig.maxWordsPerSession
+      );
+
+      // DIAGNOSTIC: Log selection results
+      const availableWords = wordBank.words.filter(w => w.introducedAt === null);
+      const learningWords = wordBank.words.filter(w => w.introducedAt !== null && w.masteryLevel <= 1);
+      console.log('[GameScreen] Word selection result:', {
+        selectedWords: words,
+        totalWordsInBank: wordBank.words.length,
+        availableCount: availableWords.length,
+        learningCount: learningWords.length,
+      });
+
+      if (words.length < 5) {
+        navigate('/');
+        return;
+      }
+
+      // NOTE: markWordsAsIntroduced is no longer called here.
+      // introduced_at is now computed server-side from word_attempts (migration 037).
+      // When word attempts are synced, the server computes introduced_at = MIN(attempted_at).
+      // This is the event-sourced approach - if a word has been attempted, it has been introduced.
+
+      startGame(words, modeConfig);
+      gameInitializedRef.current = true;
+      // Reset recording guard for new game
+      hasRecordedGameRef.current = false;
+    };
+
+    initializeGame();
   }, [modeId, gameState.status]);
 
   // Reset the initialized ref when game ends or component unmounts
