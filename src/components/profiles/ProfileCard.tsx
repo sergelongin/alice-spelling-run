@@ -22,6 +22,7 @@ export function ProfileCard({ child, onClick, isSelected = false }: ProfileCardP
       onClick={onClick}
       className={`
         group flex flex-col items-center gap-3 p-6
+        w-36 md:w-40
         bg-gray-800/50 hover:bg-gray-700/60
         border-2 rounded-xl
         transition-all duration-200 ease-out

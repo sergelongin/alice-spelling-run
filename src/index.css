@@ -1,3 +1,4 @@
+@import url('https://fonts.googleapis.com/css2?family=Lilita+One&family=Nunito:wght@400;600;700;800&display=swap');
 @import './styles/animations.css';
 
 @tailwind base;
@@ -5,19 +6,22 @@
 @tailwind utilities;
 
 :root {
-  --color-savanna-light: #F5E6C8;
+  --color-savanna-light: #FDF8E4;
+  /* Parchment */
   --color-savanna: #E8D4A8;
   --color-savanna-dark: #C4A574;
   --color-sky: #87CEEB;
   --color-grass: #228B22;
+  /* Visual viewport height - updated via JS when soft keyboard appears */
+  --visual-viewport-height: 100vh;
 }
 
 body {
   margin: 0;
-  font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+  font-family: 'Nunito', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
-  background: linear-gradient(180deg, var(--color-sky) 0%, var(--color-savanna-light) 100%);
+  background-color: var(--color-savanna-light);
   min-height: 100vh;
 }
 
@@ -105,13 +109,11 @@ body {
 
 /* Game canvas container */
 .game-canvas {
-  background: linear-gradient(
-    180deg,
-    #87CEEB 0%,
-    #87CEEB 40%,
-    #90EE90 40%,
-    #228B22 100%
-  );
+  background: linear-gradient(180deg,
+      #87CEEB 0%,
+      #87CEEB 40%,
+      #90EE90 40%,
+      #228B22 100%);
   position: relative;
   overflow: hidden;
 }
@@ -123,11 +125,65 @@ body {
   left: 0;
   right: 0;
   height: 60px;
-  background: repeating-linear-gradient(
-    90deg,
-    #228B22 0px,
-    #228B22 10px,
-    #1E7B1E 10px,
-    #1E7B1E 20px
-  );
+  background: repeating-linear-gradient(90deg,
+      #228B22 0px,
+      #228B22 10px,
+      #1E7B1E 10px,
+      #1E7B1E 20px);
+}
+
+/* Typography Utilities */
+.font-heading {
+  font-family: 'Lilita One', cursive;
+  letter-spacing: 0.025em;
+}
+
+.font-body {
+  font-family: 'Nunito', sans-serif;
+}
+
+.text-stroke-sm {
+  -webkit-text-stroke: 1px rgba(0, 0, 0, 0.3);
+}
+
+/* Juicy Button Styles */
+.btn-juice {
+  @apply relative inline-flex items-center justify-center transition-all duration-150 active:translate-y-1 active:border-b-0;
+}
+
+.btn-juice-green {
+  @apply bg-gradient-to-b from-[#4ADE80] to-[#22C55E] text-white border-b-4 border-[#14532D] rounded-2xl hover:brightness-110;
+  box-shadow: 0 4px 0 rgba(20, 83, 45, 0.4);
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+}
+
+.btn-juice-white {
+  @apply bg-white text-green-700 border-b-4 border-gray-200 shadow-lg rounded-2xl hover:bg-gray-50;
+}
+
+.btn-juice-cta {
+  @apply px-8 py-4 text-xl sm:text-2xl uppercase tracking-wide;
+}
+
+.btn-juice-sm {
+  @apply px-5 py-2 text-base font-bold;
+}
+
+/* Game screen container - respects visual viewport for soft keyboard support */
+.game-screen-keyboard-aware {
+  max-height: var(--visual-viewport-height);
+  transition: max-height 0.15s ease-out;
+}
+
+/* When keyboard is visible, reduce padding and spacing */
+.game-screen-keyboard-visible {
+  @apply p-2;
+}
+
+.game-screen-keyboard-visible .game-card {
+  @apply p-3;
+}
+
+.game-screen-keyboard-visible .game-card-spacing {
+  @apply mb-3;
 }
