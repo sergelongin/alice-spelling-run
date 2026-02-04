@@ -2,11 +2,18 @@ import { PlayerSprite } from './PlayerSprite';
 
 interface MeadowCanvasProps {
   isActive: boolean;
+  /** When true, renders a shorter canvas for soft keyboard visibility */
+  compact?: boolean;
 }
 
-export function MeadowCanvas({ isActive }: MeadowCanvasProps) {
+export function MeadowCanvas({ isActive, compact = false }: MeadowCanvasProps) {
+  // In compact mode (keyboard visible), hide the canvas entirely to save space
+  if (compact) {
+    return null;
+  }
+
   return (
-    <div className="relative h-48 overflow-hidden rounded-lg meadow-canvas">
+    <div className="relative h-32 sm:h-48 overflow-hidden rounded-lg meadow-canvas">
       {/* Sky - soft blue gradient */}
       <div className="absolute inset-0 bg-gradient-to-b from-sky-200 via-sky-100 to-green-100" />
 

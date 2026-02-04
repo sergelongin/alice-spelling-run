@@ -10,6 +10,7 @@ export { useWordBankMode } from './useWordBankMode';
 export { useParentDashboardAccess, revokeParentDashboardAccess } from './useParentDashboardAccess';
 export { useOnlineStatus } from './useOnlineStatus';
 export { useFreshGameData } from './useFreshGameData';
+export { useVisualViewport } from './useVisualViewport';
 export {
   useChildData,
   calculateAccuracy,

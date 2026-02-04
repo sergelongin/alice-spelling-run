@@ -14,7 +14,7 @@ import {
   MeadowCanvas,
 } from '../game';
 import { useGameContext } from '@/context/GameContextDB';
-import { useGameState, useGameTimer, useTextToSpeech, useSpellingHint, useWordContext } from '@/hooks';
+import { useGameState, useGameTimer, useTextToSpeech, useSpellingHint, useWordContext, useVisualViewport } from '@/hooks';
 import { selectWordsForSessionDetailed } from '@/utils';
 import { GameModeId, getGameModeConfig } from '@/types';
 import { defaultWords } from '@/data/defaultWords';
@@ -73,6 +73,17 @@ export function GameScreen() {
 
   // Word catalog for definition fallback lookups
   const { findWord: findCatalogWord } = useWordCatalog();
+
+  // Visual viewport tracking for soft keyboard support on iPad/mobile
+  const { isKeyboardVisible, height: viewportHeight } = useVisualViewport();
+
+  // Update CSS variable when viewport height changes
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      '--visual-viewport-height',
+      `${viewportHeight}px`
+    );
+  }, [viewportHeight]);
 
   // Look up the current word's full data (definition, example sentence) from wordBank
   // Falls back to defaultWords and word catalog for words imported before definitions were added
@@ -158,7 +169,7 @@ export function GameScreen() {
       });
 
       if (words.length < 5) {
-        navigate('/');
+        navigate('/home');
         return;
       }
 
@@ -440,7 +451,8 @@ export function GameScreen() {
   // Render different canvas based on mode
   const renderCanvas = () => {
     if (modeConfig.theme === 'meadow') {
-      return <MeadowCanvas isActive={isPlaying} />;
+      // Hide meadow canvas when soft keyboard is visible to keep input area visible
+      return <MeadowCanvas isActive={isPlaying} compact={isKeyboardVisible} />;
     }
     // Savannah and Wildlands use GameCanvas
     return (
@@ -453,16 +465,23 @@ export function GameScreen() {
     );
   };
 
+  // Build container classes based on keyboard visibility
+  const containerClasses = [
+    'flex-1 max-w-6xl mx-auto w-full',
+    'game-screen-keyboard-aware',
+    isKeyboardVisible ? 'game-screen-keyboard-visible p-2' : 'p-4',
+  ].join(' ');
+
   return (
-    <div className="flex-1 p-4 max-w-6xl mx-auto w-full">
+    <div className={containerClasses}>
       {/* Confetti */}
       <ConfettiEffect show={gameState.showConfetti} />
 
-      {/* Top bar */}
-      <div className="flex items-center justify-between mb-4">
+      {/* Top bar - more compact when keyboard visible */}
+      <div className={`flex items-center justify-between ${isKeyboardVisible ? 'mb-2' : 'mb-4'}`}>
         <div className="flex items-center gap-4">
           <Button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/home')}
             variant="secondary"
             size="sm"
             className="flex items-center gap-2"
@@ -503,33 +522,35 @@ export function GameScreen() {
 
       {/* Timer (only for timed modes) */}
       {modeConfig.hasTimer && (
-        <div className="mb-4">
+        <div className={isKeyboardVisible ? 'mb-2' : 'mb-4'}>
           <TimerDisplay timeRemaining={timer.timeRemaining} maxTime={modeConfig.timePerWord} />
         </div>
       )}
 
-      {/* Game canvas */}
-      <div className="mb-6">
-        {renderCanvas()}
-      </div>
+      {/* Game canvas - hidden when keyboard visible in meadow mode */}
+      {!isKeyboardVisible && (
+        <div className="mb-4 sm:mb-6">
+          {renderCanvas()}
+        </div>
+      )}
 
       {/* Main game area */}
-      <div className="flex gap-6">
+      <div className="flex gap-4 lg:gap-6">
         {/* Input section */}
         <div className="flex-1">
-          <div className="bg-white/90 rounded-xl p-6 shadow-lg">
-            {/* Word info */}
-            <div className="text-center mb-6">
+          <div className={`bg-white/90 rounded-xl shadow-lg game-card ${isKeyboardVisible ? 'p-3' : 'p-4 sm:p-6'}`}>
+            {/* Word info - more compact when keyboard visible */}
+            <div className={`text-center game-card-spacing ${isKeyboardVisible ? 'mb-2' : 'mb-4 sm:mb-6'}`}>
               <div className="text-gray-500 text-sm mb-1">
                 Word {gameState.currentWordIndex + 1} of {gameState.words.length}
               </div>
-              <div className="text-lg text-gray-700">
+              <div className="text-base sm:text-lg text-gray-700">
                 {currentWord.length} letters
               </div>
             </div>
 
             {/* Word input */}
-            <div className="mb-6">
+            <div className={`game-card-spacing ${isKeyboardVisible ? 'mb-3' : 'mb-4 sm:mb-6'}`}>
               <WordInput
                 wordLength={currentWord.length}
                 currentInput={gameState.currentInput}
@@ -545,8 +566,8 @@ export function GameScreen() {
               />
             </div>
 
-            {/* Action buttons */}
-            <div className="flex justify-center gap-4">
+            {/* Action buttons - responsive gap and wrap */}
+            <div className="flex flex-wrap justify-center gap-2 sm:gap-4">
               <RepeatButton onRepeat={handleRepeat} disabled={!isPlaying} />
 
               {/* Context button for progressive disclosure */}
@@ -568,7 +589,8 @@ export function GameScreen() {
                   preventFocusSteal
                 >
                   <SkipForward size={18} />
-                  Skip Word
+                  <span className="hidden sm:inline">Skip Word</span>
+                  <span className="sm:hidden">Skip</span>
                 </Button>
               )}
             </div>
@@ -582,8 +604,8 @@ export function GameScreen() {
           </div>
         </div>
 
-        {/* Sidebar */}
-        <div className="hidden md:block">
+        {/* Sidebar - show on larger tablets and up (lg: 1024px covers iPad) */}
+        <div className="hidden lg:block">
           <CompletedWordsList
             words={gameState.completedWords}
             currentWordNumber={gameState.currentWordIndex + 1}

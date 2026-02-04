@@ -42,7 +42,8 @@ export function RepeatButton({ onRepeat, disabled = false }: RepeatButtonProps) 
         size={24}
         className={isSpeaking ? 'animate-pulse text-blue-500' : ''}
       />
-      <span>Hear Word Again</span>
+      <span className="hidden sm:inline">Hear Word Again</span>
+      <span className="sm:hidden">Hear</span>
     </Button>
   );
 }

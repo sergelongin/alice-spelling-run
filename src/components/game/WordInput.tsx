@@ -1,8 +1,24 @@
 import { useRef, useEffect } from 'react';
 import { Lightbulb, Loader2, Volume2 } from 'lucide-react';
-import { CharacterSlot } from './CharacterSlot';
+import { CharacterSlot, SlotSize } from './CharacterSlot';
 import { WrongAttempt, LetterFeedbackResult } from '@/types';
 import { computeWordleFeedback } from '@/utils';
+
+// Gap classes corresponding to each slot size
+const gapClasses: Record<SlotSize, string> = {
+  xs: 'gap-0.5',
+  sm: 'gap-1',
+  md: 'gap-1.5',
+  lg: 'gap-2',
+};
+
+// Determine slot size based on word length to prevent overflow on mobile
+function getSlotSize(length: number): SlotSize {
+  if (length >= 11) return 'xs';
+  if (length >= 9) return 'sm';
+  if (length >= 7) return 'md';
+  return 'lg';
+}
 
 interface WordInputProps {
   wordLength: number;
@@ -54,6 +70,10 @@ export function WordInput({
     }
   };
 
+  // Calculate slot size based on word length
+  const slotSize = getSlotSize(wordLength);
+  const gapClass = gapClasses[slotSize];
+
   // Create array of slots for current input
   const slots = [];
   for (let i = 0; i < wordLength; i++) {
@@ -65,6 +85,7 @@ export function WordInput({
         key={i}
         letter={letter}
         isActive={isActive && !disabled}
+        size={slotSize}
       />
     );
   }
@@ -129,7 +150,7 @@ export function WordInput({
           {reversedAttempts.map((attempt, attemptIndex) => (
             <div key={wrongAttempts.length - 1 - attemptIndex}>
               {/* The attempt letters */}
-              <div className="flex gap-1 justify-center">
+              <div className={`flex ${gapClass} justify-center`}>
                 {feedbackStyle === 'wordle' && targetWord ? (
                   // Wordle-style feedback
                   renderWordleFeedback(attempt.input, targetWord)
@@ -151,7 +172,7 @@ export function WordInput({
   const renderWordleFeedback = (input: string, target: string) => {
     const feedback = computeWordleFeedback(input, target);
     return feedback.map((result, index) => (
-      <WordleFeedbackSlot key={index} result={result} />
+      <WordleFeedbackSlot key={index} result={result} size={slotSize} />
     ));
   };
 
@@ -162,7 +183,7 @@ export function WordInput({
       return (
         <span
           key={letterIndex}
-          className={`w-8 h-10 flex items-center justify-center text-lg font-bold uppercase rounded ${
+          className={`${feedbackSizeClasses[slotSize]} flex items-center justify-center font-bold uppercase rounded ${
             isWrong
               ? 'bg-red-200 text-red-700 border-2 border-red-400'
               : 'bg-green-200 text-green-700 border-2 border-green-400'
@@ -178,7 +199,7 @@ export function WordInput({
     <div className="flex flex-col items-center gap-4">
       {/* Visual slots for current input */}
       <div
-        className="flex gap-2"
+        className={`flex ${gapClass}`}
         onClick={() => inputRef.current?.focus()}
       >
         {slots}
@@ -231,8 +252,16 @@ export function WordInput({
   );
 }
 
+// Size classes for WordleFeedbackSlot (slightly smaller than CharacterSlot)
+const feedbackSizeClasses: Record<SlotSize, string> = {
+  xs: 'w-6 h-7 text-sm',
+  sm: 'w-7 h-8 text-base',
+  md: 'w-8 h-9 text-lg',
+  lg: 'w-8 h-10 text-lg',
+};
+
 // Helper component for Wordle feedback slot
-function WordleFeedbackSlot({ result }: { result: LetterFeedbackResult }) {
+function WordleFeedbackSlot({ result, size = 'lg' }: { result: LetterFeedbackResult; size?: SlotSize }) {
   const bgClass = {
     correct: 'bg-green-500 text-white border-green-600',
     present: 'bg-yellow-500 text-white border-yellow-600',
@@ -242,7 +271,7 @@ function WordleFeedbackSlot({ result }: { result: LetterFeedbackResult }) {
 
   return (
     <span
-      className={`w-8 h-10 flex items-center justify-center text-lg font-bold uppercase rounded border-2 ${bgClass}`}
+      className={`${feedbackSizeClasses[size]} flex items-center justify-center font-bold uppercase rounded border-2 ${bgClass}`}
     >
       {result.letter}
     </span>

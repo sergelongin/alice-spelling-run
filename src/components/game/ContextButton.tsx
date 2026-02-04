@@ -16,6 +16,13 @@ const LEVEL_LABELS: Record<ContextLevel, string> = {
   full: 'Full Context',
 };
 
+// Shorter labels for mobile screens
+const LEVEL_LABELS_SHORT: Record<ContextLevel, string> = {
+  word: 'Context',
+  definition: 'Full',
+  full: 'Full',
+};
+
 const LEVEL_DESCRIPTIONS: Record<ContextLevel, string> = {
   word: 'Hear the definition',
   definition: 'Hear an example sentence',
@@ -72,7 +79,8 @@ export function ContextButton({
       ) : (
         <Check size={24} className="text-green-500" />
       )}
-      <span>{LEVEL_LABELS[contextLevel]}</span>
+      <span className="hidden sm:inline">{LEVEL_LABELS[contextLevel]}</span>
+      <span className="sm:hidden">{LEVEL_LABELS_SHORT[contextLevel]}</span>
     </Button>
   );
 }
