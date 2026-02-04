@@ -12,8 +12,25 @@
 
 set -euo pipefail
 
-PROJECT_REF="gibingvfmrmelpchlwzn"
+# --- Determine environment ---
+ENV="${1:-prod}"
+case "$ENV" in
+  dev)
+    PROJECT_REF="kphvkkoyungqebftytkt"
+    ;;
+  prod)
+    PROJECT_REF="gibingvfmrmelpchlwzn"
+    ;;
+  *)
+    echo "Usage: $0 [dev|prod]"
+    echo "  dev  - Create accounts in development project"
+    echo "  prod - Create accounts in production project (default)"
+    exit 1
+    ;;
+esac
+
 SUPABASE_URL="https://${PROJECT_REF}.supabase.co"
+echo "Target: $ENV ($PROJECT_REF)"
 
 # --- Retrieve service_role key ---
 echo "Retrieving service_role key..."
