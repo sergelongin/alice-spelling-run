@@ -145,7 +145,7 @@ export function GameOverScreen() {
         </Button>
 
         <Button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/home')}
           variant="secondary"
           size="lg"
           className="flex items-center gap-2"

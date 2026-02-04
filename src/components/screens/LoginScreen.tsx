@@ -9,7 +9,7 @@ export function LoginScreen() {
   const location = useLocation();
 
   // Get the redirect destination from state, or default to home
-  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/';
+  const from = (location.state as { from?: { pathname: string } })?.from?.pathname || '/home';
 
   useEffect(() => {
     if (!isLoading && user) {

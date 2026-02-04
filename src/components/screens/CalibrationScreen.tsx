@@ -89,7 +89,7 @@ export function CalibrationScreen() {
       await setCalibrationComplete(result);
 
       // Navigate to home
-      navigate('/');
+      navigate('/home');
     }
   };
 

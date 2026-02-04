@@ -1,4 +1,5 @@
 export { HomeScreen } from './HomeScreen';
+export { LandingPage } from './LandingPage';
 export { WordBankScreen } from './WordBankScreen';
 export { GameScreen } from './GameScreen';
 export { VictoryScreen } from './VictoryScreen';
@@ -14,6 +15,7 @@ export { LevelMapScreen } from './LevelMapScreen';
 export { LoginScreen } from './LoginScreen';
 export { SignupScreen } from './SignupScreen';
 export { ChildSetupScreen } from './ChildSetupScreen';
+export { PinSetupScreen } from './PinSetupScreen';
 
 // Profile screens
 export { ProfileSelectionScreen } from './ProfileSelectionScreen';

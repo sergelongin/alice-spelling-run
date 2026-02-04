@@ -35,7 +35,7 @@ export function LevelMapScreen() {
       <div className="sticky top-0 z-20 bg-white/80 backdrop-blur-sm border-b border-amber-200 px-4 py-3">
         <div className="max-w-2xl mx-auto flex items-center justify-between">
           <button
-            onClick={() => navigate('/')}
+            onClick={() => navigate('/home')}
             className="flex items-center gap-2 text-gray-600 hover:text-gray-800 transition-colors"
           >
             <ArrowLeft className="w-5 h-5" />

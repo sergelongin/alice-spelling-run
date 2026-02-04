@@ -4,8 +4,10 @@ import { GameProvider } from './context/GameContextDB';
 import { AuthProvider, useAuth } from './context/AuthContext';
 import { Layout } from './components/layout';
 import { ProtectedRoute } from './components/auth';
+import { useLaunchDarklyIdentify } from './hooks/useLaunchDarklyIdentify';
 import {
   HomeScreen,
+  LandingPage,
   WordBankScreen,
   GameScreen,
   VictoryScreen,
@@ -18,6 +20,7 @@ import {
   LoginScreen,
   SignupScreen,
   ChildSetupScreen,
+  PinSetupScreen,
   ProfileSelectionScreen,
   ParentDashboardScreen,
   ChildDetailScreen,
@@ -31,6 +34,9 @@ import { AdminAudioScreen } from './components/admin';
 // This enables child-specific data isolation using WatermelonDB
 function GameProviderWithChild({ children }: { children: ReactNode }) {
   const { activeChild } = useAuth();
+
+  // Identify user to LaunchDarkly for feature flags and analytics
+  useLaunchDarklyIdentify();
 
   // Don't render GameProvider until child is selected
   // Let routing handle redirect to profile selection
@@ -54,6 +60,9 @@ function App() {
       <BrowserRouter>
         <GameProviderWithChild>
           <Routes>
+            {/* Public landing page */}
+            <Route path="/" element={<LandingPage />} />
+
             {/* Public auth routes */}
             <Route path="/login" element={<LoginScreen />} />
             <Route path="/signup" element={<SignupScreen />} />
@@ -64,6 +73,16 @@ function App() {
               element={
                 <ProtectedRoute skipProfileRequirement>
                   <ChildSetupScreen />
+                </ProtectedRoute>
+              }
+            />
+
+            {/* Protected: PIN setup (after child setup) */}
+            <Route
+              path="/setup-pin"
+              element={
+                <ProtectedRoute skipProfileRequirement>
+                  <PinSetupScreen />
                 </ProtectedRoute>
               }
             />
@@ -120,9 +139,9 @@ function App() {
               }
             />
 
-            {/* Main app routes (protected) */}
+            {/* Protected home route */}
             <Route
-              path="/"
+              path="/home"
               element={
                 <ProtectedRoute requireChild>
                   <Layout />
@@ -130,6 +149,16 @@ function App() {
               }
             >
               <Route index element={<HomeScreen />} />
+            </Route>
+
+            {/* Main app routes (protected) - Layout wraps each route */}
+            <Route
+              element={
+                <ProtectedRoute requireChild>
+                  <Layout />
+                </ProtectedRoute>
+              }
+            >
               <Route path="word-bank" element={<WordBankScreen />} />
               <Route path="game" element={<GameScreen />} />
               <Route path="victory" element={<VictoryScreen />} />
