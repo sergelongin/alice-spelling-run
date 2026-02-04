@@ -58,7 +58,7 @@ export function Header() {
       <div className="max-w-6xl mx-auto px-4 py-3">
         <nav className="flex items-center justify-between">
           <Link
-            to="/"
+            to="/home"
             className="font-bold text-gray-800 hover:text-blue-600 transition-colors"
           >
             <span className="lg:hidden text-lg">Alice</span>
@@ -77,10 +77,10 @@ export function Header() {
             {!isAdminRoute && !isParentDashboardRoute && (
               <>
                 <Link
-                  to="/"
+                  to="/home"
                   title="Home"
                   className={`flex items-center gap-2 px-3 lg:px-4 py-2 rounded-lg transition-colors ${
-                    isActive('/')
+                    isActive('/home')
                       ? 'bg-blue-100 text-blue-600'
                       : 'text-gray-600 hover:bg-gray-100'
                   }`}
@@ -121,7 +121,7 @@ export function Header() {
             {isAdminRoute && (
               <>
                 <Link
-                  to="/"
+                  to="/home"
                   title="Back to App"
                   className="flex items-center gap-2 px-3 lg:px-4 py-2 text-gray-600 hover:bg-gray-100 rounded-lg transition-colors"
                 >

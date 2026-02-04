@@ -1,17 +1,30 @@
 import { LetterFeedback } from '@/types';
 
+export type SlotSize = 'xs' | 'sm' | 'md' | 'lg';
+
 interface CharacterSlotProps {
   letter: string | null;
   isActive: boolean;
   feedback?: LetterFeedback;
+  size?: SlotSize;
 }
+
+// Size classes for different word lengths
+// xs: 28px (11+ letters), sm: 32px (9-10), md: 40px (7-8), lg: 48px (1-6)
+const sizeClasses: Record<SlotSize, string> = {
+  xs: 'w-7 h-8 text-base',
+  sm: 'w-8 h-9 text-lg',
+  md: 'w-10 h-11 text-xl',
+  lg: 'w-12 h-14 text-2xl',
+};
 
 export function CharacterSlot({
   letter,
   isActive,
   feedback,
+  size = 'lg',
 }: CharacterSlotProps) {
-  const baseClass = 'w-12 h-14 border-b-4 flex items-center justify-center text-2xl font-bold uppercase transition-all duration-200';
+  const baseClass = `${sizeClasses[size]} border-b-4 flex items-center justify-center font-bold uppercase transition-all duration-200`;
 
   // Determine background and border colors based on feedback or letter presence
   let bgClass = 'bg-transparent border-gray-400';

@@ -18,7 +18,7 @@ export function VictoryScreen() {
       <div className="flex-1 flex items-center justify-center">
         <div className="text-center">
           <p className="text-gray-600 mb-4">No game result found</p>
-          <Button onClick={() => navigate('/')} variant="primary">
+          <Button onClick={() => navigate('/home')} variant="primary">
             Go Home
           </Button>
         </div>
@@ -161,7 +161,7 @@ export function VictoryScreen() {
         </Button>
 
         <Button
-          onClick={() => navigate('/')}
+          onClick={() => navigate('/home')}
           variant="secondary"
           size="lg"
           className="flex items-center gap-2"

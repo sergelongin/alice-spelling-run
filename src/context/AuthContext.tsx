@@ -12,6 +12,11 @@ import {
   clearAllAuthCache,
   hasSupabaseSessionStorage,
 } from '@/lib/authCache';
+import {
+  setCachedPinHash,
+  clearCachedPinHash,
+  hasCachedPin,
+} from '@/lib/pinCache';
 import type { Session, AuthChangeEvent } from '@supabase/supabase-js';
 import type {
   AuthContextValue,
@@ -60,12 +65,14 @@ const initialState: AuthState = {
   cacheStatus: 'none',
   error: null,
   hasSelectedProfileThisSession: hasProfileBeenSelectedThisSession(),
+  hasPinSet: false,
 };
 
 // Create optimistic initial state from cache (synchronous)
 function createOptimisticState(): AuthState {
   const cachedSession = getCachedSession();
   const hasSelectedProfile = hasProfileBeenSelectedThisSession();
+  const hasCachedPinSet = hasCachedPin();
 
   if (cachedSession) {
     const cachedProfile = getCachedProfile();
@@ -78,6 +85,9 @@ function createOptimisticState(): AuthState {
       (cachedProfile?.isStale ?? true) ||
       (cachedChildren?.isStale ?? true);
 
+    // Check PIN status from profile or cache
+    const hasPinSet = cachedProfile?.profile?.pin_hash != null || hasCachedPinSet;
+
     return {
       user: cachedSession.session.user,
       session: cachedSession.session,
@@ -89,6 +99,7 @@ function createOptimisticState(): AuthState {
       cacheStatus: isStale ? 'stale' : 'fresh',
       error: null,
       hasSelectedProfileThisSession: hasSelectedProfile,
+      hasPinSet,
     };
   }
 
@@ -204,6 +215,14 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
         const activeChild = loadActiveChild(childrenList);
 
+        // Check PIN status
+        const hasPinSet = profile?.pin_hash != null;
+
+        // If profile has PIN hash, cache it for offline verification
+        if (profile?.pin_hash) {
+          setCachedPinHash(profile.pin_hash);
+        }
+
         setState(prev => ({
           user: session.user,
           session,
@@ -215,6 +234,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
           cacheStatus: 'fresh',
           error: null,
           hasSelectedProfileThisSession: prev.hasSelectedProfileThisSession,
+          hasPinSet,
         }));
 
         // Sync word catalog in background (non-blocking)
@@ -301,6 +321,14 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
               setProfileSelectedThisSession(false);
             }
 
+            // Check PIN status
+            const hasPinSet = profile?.pin_hash != null;
+
+            // If profile has PIN hash, cache it for offline verification
+            if (profile?.pin_hash) {
+              setCachedPinHash(profile.pin_hash);
+            }
+
             setState({
               user: session.user,
               session,
@@ -313,6 +341,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
               error: null,
               // Preserve profile selection if they had an active child (session refresh)
               hasSelectedProfileThisSession: hadActiveChild,
+              hasPinSet,
             });
 
             // Sync word catalog in background (non-blocking)
@@ -335,6 +364,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
           }, 0);
         } else if (event === 'SIGNED_OUT') {
           clearAllAuthCache();
+          clearCachedPinHash();
           setProfileSelectedThisSession(false);
           setState({ ...initialState, isLoading: false, isValidating: false, cacheStatus: 'none', hasSelectedProfileThisSession: false });
         } else if (event === 'TOKEN_REFRESHED' && session) {
@@ -404,6 +434,7 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
 
     // 1. Clear all caches FIRST (synchronous, guaranteed)
     clearAllAuthCache();
+    clearCachedPinHash();
 
     // 2. Update state immediately (don't wait for Supabase)
     setState({ ...initialState, isLoading: false, isValidating: false, cacheStatus: 'none' });
@@ -684,6 +715,92 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
     }));
   }, []);
 
+  // Set parent PIN (calls Supabase RPC)
+  const setParentPin = useCallback(async (pin: string): Promise<{ success: boolean; error?: string }> => {
+    if (!state.user) return { success: false, error: 'Not authenticated' };
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase.rpc as any)('set_parent_pin', {
+        p_pin: pin,
+      });
+
+      if (error) {
+        console.error('[Auth] Set parent PIN RPC error:', error);
+        return { success: false, error: error.message };
+      }
+
+      const result = data as { success: boolean; error?: string; pin_hash?: string };
+
+      if (result.success && result.pin_hash) {
+        // Cache the hash for offline verification
+        setCachedPinHash(result.pin_hash);
+
+        // Update state
+        setState(prev => ({
+          ...prev,
+          hasPinSet: true,
+          profile: prev.profile ? { ...prev.profile, pin_hash: result.pin_hash! } : null,
+        }));
+
+        // Update profile cache
+        if (state.profile) {
+          setCachedProfile({ ...state.profile, pin_hash: result.pin_hash });
+        }
+      }
+
+      return { success: result.success, error: result.error };
+    } catch (err) {
+      console.error('[Auth] Set parent PIN error:', err);
+      return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
+  }, [state.user, state.profile]);
+
+  // Verify parent PIN (calls Supabase RPC)
+  const verifyParentPin = useCallback(async (pin: string): Promise<{
+    success: boolean;
+    error?: string;
+    attemptsRemaining?: number;
+    lockedUntil?: string;
+  }> => {
+    if (!state.user) return { success: false, error: 'Not authenticated' };
+
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const { data, error } = await (supabase.rpc as any)('verify_parent_pin', {
+        p_pin: pin,
+      });
+
+      if (error) {
+        console.error('[Auth] Verify parent PIN RPC error:', error);
+        return { success: false, error: error.message };
+      }
+
+      const result = data as {
+        success: boolean;
+        error?: string;
+        pin_hash?: string;
+        attempts_remaining?: number;
+        locked_until?: string;
+      };
+
+      if (result.success && result.pin_hash) {
+        // Cache the hash for offline verification
+        setCachedPinHash(result.pin_hash);
+      }
+
+      return {
+        success: result.success,
+        error: result.error,
+        attemptsRemaining: result.attempts_remaining,
+        lockedUntil: result.locked_until,
+      };
+    } catch (err) {
+      console.error('[Auth] Verify parent PIN error:', err);
+      return { success: false, error: err instanceof Error ? err.message : 'Unknown error' };
+    }
+  }, [state.user]);
+
   // Computed role helpers
   const isSuperAdmin = state.profile?.role === 'super_admin';
   const isParent = state.profile?.role === 'parent';
@@ -692,6 +809,8 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
   const needsChildSetup = !!state.user && isParentOrSuperAdmin && !hasChildren;
   // Netflix-style: parents/super_admins with children need to select a profile each session
   const needsProfileSelection = !!state.user && isParentOrSuperAdmin && hasChildren && !state.hasSelectedProfileThisSession;
+  // Parents with children need to set up PIN if they haven't
+  const needsPinSetup = !!state.user && isParentOrSuperAdmin && hasChildren && !state.hasPinSet;
 
   const value = useMemo<AuthContextValue>(
     () => ({
@@ -708,12 +827,15 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       setActiveChild,
       selectProfile,
       clearProfileSelection,
+      setParentPin,
+      verifyParentPin,
       isSuperAdmin,
       isParent,
       isParentOrSuperAdmin,
       hasChildren,
       needsChildSetup,
       needsProfileSelection,
+      needsPinSetup,
     }),
     [
       state,
@@ -729,12 +851,15 @@ export function AuthProvider({ children: childrenNodes }: { children: ReactNode 
       setActiveChild,
       selectProfile,
       clearProfileSelection,
+      setParentPin,
+      verifyParentPin,
       isSuperAdmin,
       isParent,
       isParentOrSuperAdmin,
       hasChildren,
       needsChildSetup,
       needsProfileSelection,
+      needsPinSetup,
     ]
   );
 

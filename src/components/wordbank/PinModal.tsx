@@ -5,9 +5,11 @@ import { Button } from '../common';
 interface PinModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onSubmit: (pin: string) => void;
+  onSubmit: (pin: string) => void | Promise<void>;
   isCreating: boolean;
   error: string | null;
+  isLoading?: boolean;
+  onForgotPin?: () => void;
 }
 
 /**
@@ -19,12 +21,13 @@ interface PinModalProps {
  * - Show/hide PIN toggle
  * - Different messaging for create vs verify flows
  */
-export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinModalProps) {
+export function PinModal({ isOpen, onClose, onSubmit, isCreating, error, isLoading = false, onForgotPin }: PinModalProps) {
   const [digits, setDigits] = useState<string[]>(['', '', '', '']);
   const [confirmDigits, setConfirmDigits] = useState<string[]>(['', '', '', '']);
   const [showPin, setShowPin] = useState(false);
   const [step, setStep] = useState<'enter' | 'confirm'>('enter');
   const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   const inputRefs = useRef<(HTMLInputElement | null)[]>([]);
   const confirmInputRefs = useRef<(HTMLInputElement | null)[]>([]);
@@ -124,7 +127,7 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
     }
   };
 
-  const handleSubmitAttempt = () => {
+  const handleSubmitAttempt = async () => {
     const pin = digits.join('');
 
     if (pin.length !== 4) {
@@ -148,15 +151,19 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
           confirmInputRefs.current[0]?.focus();
         }, 100);
       } else {
-        onSubmit(pin);
+        setIsSubmitting(true);
+        await onSubmit(pin);
+        setIsSubmitting(false);
       }
     } else {
       // Just verifying existing PIN
-      onSubmit(pin);
+      setIsSubmitting(true);
+      await onSubmit(pin);
+      setIsSubmitting(false);
     }
   };
 
-  const handleConfirmSubmit = () => {
+  const handleConfirmSubmit = async () => {
     const pin = digits.join('');
     const confirmPin = confirmDigits.join('');
 
@@ -171,7 +178,9 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
         confirmInputRefs.current[0]?.focus();
       }, 100);
     } else {
-      onSubmit(pin);
+      setIsSubmitting(true);
+      await onSubmit(pin);
+      setIsSubmitting(false);
     }
   };
 
@@ -180,6 +189,7 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
   const currentDigits = step === 'confirm' ? confirmDigits : digits;
   const isComplete = currentDigits.every(d => d !== '');
   const displayError = step === 'confirm' ? confirmError : error;
+  const isDisabled = isLoading || isSubmitting;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center">
@@ -244,8 +254,9 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
                 onPaste={e => handlePaste(e, step === 'confirm')}
                 className="w-14 h-16 text-center text-2xl font-bold border-2 border-gray-200 rounded-xl
                          focus:border-purple-500 focus:ring-2 focus:ring-purple-200 outline-none
-                         transition-all"
+                         transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                 autoComplete="off"
+                disabled={isDisabled}
               />
             ))}
           </div>
@@ -271,15 +282,34 @@ export function PinModal({ isOpen, onClose, onSubmit, isCreating, error }: PinMo
           <Button
             onClick={step === 'confirm' ? handleConfirmSubmit : handleSubmitAttempt}
             variant="primary"
-            disabled={!isComplete}
+            disabled={!isComplete || isDisabled}
             className="w-full bg-gradient-to-r from-purple-500 to-indigo-600 hover:from-purple-600 hover:to-indigo-700"
           >
-            {isCreating && step === 'enter'
-              ? 'Continue'
-              : isCreating && step === 'confirm'
-              ? 'Create PIN'
-              : 'Unlock Parent Mode'}
+            {isDisabled ? (
+              <span className="flex items-center justify-center gap-2">
+                <span className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent" />
+                Verifying...
+              </span>
+            ) : isCreating && step === 'enter' ? (
+              'Continue'
+            ) : isCreating && step === 'confirm' ? (
+              'Create PIN'
+            ) : (
+              'Unlock Parent Mode'
+            )}
           </Button>
+
+          {/* Forgot PIN link */}
+          {!isCreating && onForgotPin && (
+            <button
+              type="button"
+              onClick={onForgotPin}
+              disabled={isDisabled}
+              className="w-full text-sm text-purple-600 hover:text-purple-700 hover:underline mt-2 disabled:opacity-50"
+            >
+              Forgot PIN?
+            </button>
+          )}
 
           {/* Step indicator for creation flow */}
           {isCreating && (

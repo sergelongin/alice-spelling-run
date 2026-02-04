@@ -190,7 +190,7 @@ export function WildlandsHubScreen() {
 
       {/* Back button */}
       <Button
-        onClick={() => navigate('/')}
+        onClick={() => navigate('/home')}
         variant="secondary"
         className="flex items-center gap-2"
       >

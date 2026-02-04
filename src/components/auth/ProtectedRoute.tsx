@@ -46,7 +46,7 @@ export function ProtectedRoute({
   skipProfileRequirement = false,
   redirectTo = '/login',
 }: ProtectedRouteProps) {
-  const { user, profile, isLoading, isSuperAdmin, needsChildSetup, needsProfileSelection } = useAuth();
+  const { user, profile, isLoading, isSuperAdmin, needsChildSetup, needsProfileSelection, needsPinSetup } = useAuth();
   const location = useLocation();
 
   // Show loading spinner only when:
@@ -71,7 +71,7 @@ export function ProtectedRoute({
   // Role check
   if (allowedRoles && profile && !allowedRoles.includes(profile.role)) {
     // Redirect non-authorized users to home
-    return <Navigate to="/" replace />;
+    return <Navigate to="/home" replace />;
   }
 
   // Super admins accessing admin routes bypass child requirements
@@ -84,6 +84,11 @@ export function ProtectedRoute({
   // Parent needs child setup - redirect unless we're already on setup page
   if (needsChildSetup && location.pathname !== '/setup-child') {
     return <Navigate to="/setup-child" replace />;
+  }
+
+  // Parent needs PIN setup - redirect unless we're already on setup page
+  if (needsPinSetup && location.pathname !== '/setup-pin') {
+    return <Navigate to="/setup-pin" replace />;
   }
 
   // Netflix-style profile selection: require profile selection if enabled and not skipped

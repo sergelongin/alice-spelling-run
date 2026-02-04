@@ -23,6 +23,10 @@ export interface Database {
           display_name: string | null;
           role: UserRole;
           created_at: string;
+          pin_hash: string | null;
+          pin_updated_at: string | null;
+          pin_failed_attempts: number;
+          pin_locked_until: string | null;
         };
         Insert: {
           id: string;
@@ -30,6 +34,10 @@ export interface Database {
           display_name?: string | null;
           role?: UserRole;
           created_at?: string;
+          pin_hash?: string | null;
+          pin_updated_at?: string | null;
+          pin_failed_attempts?: number;
+          pin_locked_until?: string | null;
         };
         Update: {
           id?: string;
@@ -37,6 +45,10 @@ export interface Database {
           display_name?: string | null;
           role?: UserRole;
           created_at?: string;
+          pin_hash?: string | null;
+          pin_updated_at?: string | null;
+          pin_failed_attempts?: number;
+          pin_locked_until?: string | null;
         };
         Relationships: [];
       };

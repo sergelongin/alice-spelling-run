@@ -14,6 +14,7 @@ export function ParentsCard({ onClick }: ParentsCardProps) {
       onClick={onClick}
       className="
         group flex flex-col items-center justify-center gap-3 p-6
+        w-36 md:w-40
         bg-gradient-to-br from-purple-900/50 to-indigo-900/50
         hover:from-purple-800/60 hover:to-indigo-800/60
         border-2 border-purple-600/50 hover:border-purple-500/70

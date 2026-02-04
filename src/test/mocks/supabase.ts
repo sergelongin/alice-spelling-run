@@ -35,6 +35,10 @@ export function createMockProfile(overrides: Partial<UserProfile> = {}): UserPro
     display_name: 'Test User',
     role: 'parent',
     created_at: new Date().toISOString(),
+    pin_hash: null,
+    pin_updated_at: null,
+    pin_failed_attempts: 0,
+    pin_locked_until: null,
     ...overrides,
   };
 }

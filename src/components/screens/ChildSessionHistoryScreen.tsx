@@ -6,7 +6,7 @@ import { useParentDashboardAccess, useChildData } from '@/hooks';
 import { PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
 import { EditProfileModal, DeleteConfirmDialog, ResetProgressDialog } from '@/components/profiles';
-import { ChildHeaderCard } from '@/components/parent';
+import { ChildHeaderCard, PinResetModal } from '@/components/parent';
 import { GameSessionDialog } from '@/components/statistics';
 import { GameResult, WordAttempt } from '@/types';
 import { getTrophyEmoji } from '@/utils';
@@ -213,15 +213,15 @@ function SessionList({ sessions, onSessionClick }: SessionListProps) {
 export function ChildSessionHistoryScreen() {
   const { childId } = useParams<{ childId: string }>();
   const navigate = useNavigate();
-  const { children, isParentOrSuperAdmin, hasChildren } = useAuth();
+  const { children, isParentOrSuperAdmin, hasChildren, setParentPin } = useAuth();
   const {
     isAuthorized,
     isPinModalOpen,
     pinError,
     isCreatingPin,
+    isVerifying,
     requestAccess,
     verifyPin,
-    createPin,
     closePinModal,
   } = useParentDashboardAccess();
 
@@ -229,6 +229,7 @@ export function ChildSessionHistoryScreen() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
   const [selectedSession, setSelectedSession] = useState<GameResult | null>(null);
+  const [showPinReset, setShowPinReset] = useState(false);
 
   // Find the current child
   const currentChild = useMemo(
@@ -258,11 +259,11 @@ export function ChildSessionHistoryScreen() {
   }, [isAuthorized, requestAccess]);
 
   // Handle PIN submission
-  const handlePinSubmit = (pin: string) => {
+  const handlePinSubmit = async (pin: string) => {
     if (isCreatingPin) {
-      createPin(pin);
+      await setParentPin(pin);
     } else {
-      verifyPin(pin);
+      await verifyPin(pin);
     }
   };
 
@@ -272,6 +273,18 @@ export function ChildSessionHistoryScreen() {
     if (!isAuthorized) {
       navigate('/parent-dashboard');
     }
+  };
+
+  // Handle forgot PIN
+  const handleForgotPin = () => {
+    closePinModal();
+    setShowPinReset(true);
+  };
+
+  // Handle PIN reset success
+  const handlePinResetSuccess = () => {
+    setShowPinReset(false);
+    requestAccess();
   };
 
   // Handle export
@@ -313,13 +326,22 @@ export function ChildSessionHistoryScreen() {
   // Show PIN modal if not authorized
   if (!isAuthorized) {
     return (
-      <PinModal
-        isOpen={isPinModalOpen}
-        onClose={handlePinClose}
-        onSubmit={handlePinSubmit}
-        isCreating={isCreatingPin}
-        error={pinError}
-      />
+      <>
+        <PinModal
+          isOpen={isPinModalOpen}
+          onClose={handlePinClose}
+          onSubmit={handlePinSubmit}
+          isCreating={isCreatingPin}
+          error={pinError}
+          isLoading={isVerifying}
+          onForgotPin={handleForgotPin}
+        />
+        <PinResetModal
+          isOpen={showPinReset}
+          onClose={() => setShowPinReset(false)}
+          onSuccess={handlePinResetSuccess}
+        />
+      </>
     );
   }
 
@@ -328,7 +350,7 @@ export function ChildSessionHistoryScreen() {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center">
         <p className="text-gray-600 mb-4">Parent Dashboard is only available for parent accounts with children.</p>
-        <Button onClick={() => navigate('/')}>Go Home</Button>
+        <Button onClick={() => navigate('/home')}>Go Home</Button>
       </div>
     );
   }

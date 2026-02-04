@@ -255,14 +255,20 @@ JSONB fields (like `attempt_history_json`) require explicit handling in transfor
 - `push_changes(p_child_id, p_changes)` - Processes client changes with conflict resolution
   - Uses each record's `child_id` (not `p_child_id`) for inserts/updates
   - Validates parent ownership of each child_id before processing
-- Defined in `supabase/migrations/009_watermelon_sync.sql`, `024_push_uses_record_child_id.sql`, `027_parent_level_sync.sql`, `030_simplified_push_changes.sql`, `031_fix_introduced_at_update.sql`, `032_sync_timestamp_triggers.sql`, `033_computed_learning_progress.sql`, `034_fix_word_mastery_sync.sql`, `035_fix_mastery_computation.sql`, `036_compute_next_review_at.sql`, `037_compute_introduced_at.sql`
+- `set_parent_pin(p_pin)` - Set/update parent PIN with bcrypt hashing
+- `verify_parent_pin(p_pin)` - Verify PIN with rate limiting
+- `has_parent_pin()` - Check if user has PIN set
+- Defined in `supabase/migrations/009_watermelon_sync.sql`, `024_push_uses_record_child_id.sql`, `027_parent_level_sync.sql`, `030_simplified_push_changes.sql`, `031_fix_introduced_at_update.sql`, `032_sync_timestamp_triggers.sql`, `033_computed_learning_progress.sql`, `034_fix_word_mastery_sync.sql`, `035_fix_mastery_computation.sql`, `036_compute_next_review_at.sql`, `037_compute_introduced_at.sql`, `038_parent_pin.sql`
 
 ### Supabase (Database & Auth)
 
-**Project Info:**
-- Project ref: `gibingvfmrmelpchlwzn`
-- Region: South Asia (Mumbai)
-- Migrations: `supabase/migrations/`
+**Projects:**
+| Environment | Project Ref | Region | Dashboard |
+|-------------|-------------|--------|-----------|
+| Production | `gibingvfmrmelpchlwzn` | South Asia (Mumbai) | [Dashboard](https://supabase.com/dashboard/project/gibingvfmrmelpchlwzn) |
+| Development | `kphvkkoyungqebftytkt` | South Asia (Mumbai) | [Dashboard](https://supabase.com/dashboard/project/kphvkkoyungqebftytkt) |
+
+**Migrations:** `supabase/migrations/`
 
 **Authentication:**
 - Email/password signup with email confirmation
@@ -277,9 +283,19 @@ JSONB fields (like `attempt_history_json`) require explicit handling in transfor
 
 **Auth Flow:**
 ```
-Sign Up → Email confirmation → Sign In → Profile auto-created → Add children
-Google OAuth → Redirect to Google → Callback → Profile auto-created → Add children
+Sign Up → Email confirmation → Sign In → Profile auto-created → Add children → Set PIN → Profile Selection
+Google OAuth → Redirect to Google → Callback → Profile auto-created → Add children → Set PIN → Profile Selection
 ```
+
+**Parent PIN:**
+- Required 4-digit PIN protects Parent Dashboard from children
+- Server-side bcrypt hashing (cost 10) via `set_parent_pin` RPC
+- Rate limiting: 5 failed attempts → 15 minute lockout
+- Offline verification via cached bcrypt hash (`src/lib/pinCache.ts`)
+- Forgot PIN flow: re-authenticate with password → set new PIN
+- PIN setup screen: `src/components/screens/PinSetupScreen.tsx`
+- PIN reset modal: `src/components/parent/PinResetModal.tsx`
+- Migration: `038_parent_pin.sql`
 
 **Key Auth Hooks/Components:**
 - `useAuth()` - Access auth state and actions (signIn, signOut, addChild, etc.)
@@ -293,14 +309,21 @@ Google OAuth → Redirect to Google → Callback → Profile auto-created → Ad
 
 **Key Commands:**
 ```bash
+# Load environment variables first
+source .env.development  # For dev commands
+source .env              # For prod commands
+
 # Check migration status (local vs remote)
-supabase migration list -p "$VITE_SUPABASE_DBPASSWPRD"
+supabase migration list -p "$DEV_DB_PASSWORD"           # Dev
+supabase migration list -p "$VITE_SUPABASE_DBPASSWPRD"  # Prod
 
 # Apply pending migrations
-supabase db push -p "$VITE_SUPABASE_DBPASSWPRD"
+supabase db push -p "$DEV_DB_PASSWORD"                  # Dev
+supabase db push -p "$VITE_SUPABASE_DBPASSWPRD"         # Prod
 
 # Fix out-of-sync migration history (mark as already applied)
-supabase migration repair VERSION --status applied -p "$VITE_SUPABASE_DBPASSWPRD"
+supabase migration repair VERSION --status applied -p "$DEV_DB_PASSWORD"           # Dev
+supabase migration repair VERSION --status applied -p "$VITE_SUPABASE_DBPASSWPRD"  # Prod
 
 # View linked projects
 supabase projects list
@@ -330,9 +353,34 @@ supabase projects list
   COALESCE((p_changes->'foo')::jsonb, '[]'::jsonb) || COALESCE((p_changes->'bar')::jsonb, '[]'::jsonb)
   ```
 
-**Database Password:**
-- Stored in `.env` as `VITE_SUPABASE_DBPASSWPRD`
-- Use `$VITE_SUPABASE_DBPASSWPRD` in shell commands (load with `source .env`)
+**Environment Variables (Dev vs Prod):**
+
+| File | Environment | Variables |
+|------|-------------|-----------|
+| `.env.development` | Dev | `DEV_PROJECT_REF`, `DEV_DB_PASSWORD`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` |
+| `.env` | Prod | `VITE_SUPABASE_DBPASSWPRD`, `VITE_SUPABASE_URL`, `VITE_SUPABASE_PUBLISHABLE_KEY` |
+
+**Database password variables:**
+| Environment | Variable | File |
+|-------------|----------|------|
+| Dev | `DEV_DB_PASSWORD` | `.env.development` |
+| Prod | `VITE_SUPABASE_DBPASSWPRD` | `.env` |
+
+**Usage:**
+```bash
+# Dev migrations
+source .env.development
+supabase db push -p "$DEV_DB_PASSWORD"
+
+# Prod migrations (be careful!)
+source .env
+supabase db push -p "$VITE_SUPABASE_DBPASSWPRD"
+```
+
+**Note:** The CLI is linked to the dev project by default. For prod operations, you may need to re-link:
+```bash
+supabase link --project-ref gibingvfmrmelpchlwzn -p "$VITE_SUPABASE_DBPASSWPRD"
+```
 
 **Query Best Practices:**
 - PostgREST has a **1,000 row server limit** - client `.limit()` cannot override this
@@ -349,6 +397,73 @@ supabase projects list
 - `getWordCount()`: Efficient COUNT query without fetching data
 - `getSegmentCounts()`: COUNT query for audio segments
 - `getAudioSegmentsForWords()`: Fetch audio for specific words (use for current page only)
+
+### Development & Deployment
+
+**Environments:**
+| Environment | Branch | Supabase Project | URL |
+|-------------|--------|------------------|-----|
+| Production | `main` | `gibingvfmrmelpchlwzn` | https://spellingrun.fictiono.us |
+| Development | `develop` | `kphvkkoyungqebftytkt` | http://localhost:5173 |
+
+**Git Workflow:**
+```
+main (production) ← merges from develop, auto-deploys to Vercel
+  └── develop (integration) ← feature branches merge here
+        └── feature/* branches
+```
+
+**Branch Protection:**
+- `main`: Requires PR, status checks (`lint-and-test`), blocks force push
+- `develop`: Requires status checks (`lint-and-test`)
+
+**Local Development:**
+```bash
+# Uses .env.development (gitignored) which points to dev Supabase
+npm run dev
+```
+
+**Deployment:**
+- Vercel auto-deploys `main` to production
+- PRs get preview deployments with unique URLs
+- Environment variables configured in Vercel Dashboard
+
+**Migration Workflow:**
+```bash
+# 1. Create migration
+supabase migration new description
+
+# 2. Apply to dev and test
+source .env.development
+supabase db push -p "$DEV_DB_PASSWORD"
+
+# 3. Create PR, CI passes
+
+# 4. Apply to prod (requires confirmation - be careful!)
+source .env
+supabase link --project-ref gibingvfmrmelpchlwzn -p "$VITE_SUPABASE_DBPASSWPRD"
+supabase db push -p "$VITE_SUPABASE_DBPASSWPRD"
+# Re-link to dev after prod migration
+source .env.development
+supabase link --project-ref kphvkkoyungqebftytkt -p "$DEV_DB_PASSWORD"
+
+# 5. Merge PR → Vercel deploys
+```
+
+**Key Files:**
+- `.env.development` - Dev/Prod Supabase credentials (gitignored)
+- `.env.example` - Template for new developers
+- `vercel.json` - Vercel configuration
+- `.github/workflows/ci.yml` - CI pipeline (lint, typecheck, test, build)
+
+**Auth Redirect Configuration:**
+When adding new domains, update:
+1. **Supabase Dashboard** → Authentication → URL Configuration
+   - Site URL (primary domain)
+   - Redirect URLs (all allowed domains with `/**` wildcard)
+2. **Google Cloud Console** → OAuth credentials
+   - Authorized JavaScript origins
+   - Redirect URI: `https://<project>.supabase.co/auth/v1/callback`
 
 ### Learning System
 - **Spaced Repetition**: Leitner-based system with mastery levels 0-5 (`src/utils/wordSelection.ts`)

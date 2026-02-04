@@ -1,24 +1,27 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/context/AuthContext';
 import { useParentDashboardAccess } from '@/hooks';
 import { ProfileCard, ParentsCard } from '@/components/profiles';
 import { PinModal } from '@/components/wordbank';
+import { PinResetModal } from '@/components/parent';
 
 export function ProfileSelectionScreen() {
-  const { children, activeChild, selectProfile } = useAuth();
+  const { children, activeChild, selectProfile, setParentPin } = useAuth();
   const navigate = useNavigate();
   const {
     isAuthorized,
     isPinModalOpen,
     pinError,
     isCreatingPin,
+    isVerifying,
     requestAccess,
     verifyPin,
-    createPin,
     closePinModal,
     revokeAccess,
   } = useParentDashboardAccess();
+
+  const [showPinReset, setShowPinReset] = useState(false);
 
   // Revoke parent dashboard access when returning to profile selection
   // This ensures users must re-enter PIN when navigating from parent mode back to profiles
@@ -54,17 +57,30 @@ export function ProfileSelectionScreen() {
     }
   };
 
-  const handlePinSubmit = (pin: string) => {
+  const handlePinSubmit = async (pin: string) => {
     if (isCreatingPin) {
-      createPin(pin);
+      // This shouldn't happen anymore - PIN creation is in PinSetupScreen
+      await setParentPin(pin);
     } else {
-      verifyPin(pin);
+      await verifyPin(pin);
     }
   };
 
   const handlePinClose = () => {
     sessionStorage.removeItem('pending-parent-dashboard-nav');
     closePinModal();
+  };
+
+  const handleForgotPin = () => {
+    sessionStorage.removeItem('pending-parent-dashboard-nav');
+    closePinModal();
+    setShowPinReset(true);
+  };
+
+  const handlePinResetSuccess = () => {
+    setShowPinReset(false);
+    // After reset, navigate to parent dashboard if that's where they were going
+    navigate('/parent-dashboard');
   };
 
   return (
@@ -78,7 +94,7 @@ export function ProfileSelectionScreen() {
           </h1>
 
           {/* Profile grid */}
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 md:gap-6">
+          <div className="flex flex-wrap justify-center gap-4 md:gap-6">
             {children.map((child) => (
               <ProfileCard
                 key={child.id}
@@ -99,6 +115,15 @@ export function ProfileSelectionScreen() {
         onSubmit={handlePinSubmit}
         isCreating={isCreatingPin}
         error={pinError}
+        isLoading={isVerifying}
+        onForgotPin={handleForgotPin}
+      />
+
+      {/* PIN Reset Modal */}
+      <PinResetModal
+        isOpen={showPinReset}
+        onClose={() => setShowPinReset(false)}
+        onSuccess={handlePinResetSuccess}
       />
     </div>
   );
