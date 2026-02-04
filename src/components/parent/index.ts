@@ -3,3 +3,4 @@ export { ChildSwitcher } from './ChildSwitcher';
 export { FamilyOverview } from './FamilyOverview';
 export { AttentionNeededList } from './AttentionNeededList';
 export { ChildHeaderCard } from './ChildHeaderCard';
+export { PinResetModal } from './PinResetModal';

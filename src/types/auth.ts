@@ -23,6 +23,7 @@ export interface AuthState {
   cacheStatus: CacheStatus;  // Current cache state
   error: string | null;
   hasSelectedProfileThisSession: boolean;  // Netflix-style: requires selection every session
+  hasPinSet: boolean;  // Whether parent has set up their PIN
 }
 
 export interface SignUpData {
@@ -67,6 +68,10 @@ export interface AuthContextValue extends AuthState {
   selectProfile: (childId: string) => void;  // Select and mark as selected this session
   clearProfileSelection: () => void;  // Reset selection (for "Switch Profile")
 
+  // Parent PIN
+  setParentPin: (pin: string) => Promise<{ success: boolean; error?: string }>;
+  verifyParentPin: (pin: string) => Promise<{ success: boolean; error?: string; attemptsRemaining?: number; lockedUntil?: string }>;
+
   // Role helpers
   isSuperAdmin: boolean;
   isParent: boolean;
@@ -74,4 +79,5 @@ export interface AuthContextValue extends AuthState {
   hasChildren: boolean;
   needsChildSetup: boolean;
   needsProfileSelection: boolean;  // True if user needs to select a profile this session
+  needsPinSetup: boolean;  // True if parent needs to set up PIN (has children but no PIN)
 }

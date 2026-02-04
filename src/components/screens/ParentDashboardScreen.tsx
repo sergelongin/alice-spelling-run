@@ -6,7 +6,7 @@ import { useParentDashboardAccess } from '@/hooks';
 import { PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
 import { EditProfileModal, DeleteConfirmDialog } from '@/components/profiles';
-import { ChildSummaryCard, FamilyOverview, AttentionNeededList } from '@/components/parent';
+import { ChildSummaryCard, FamilyOverview, AttentionNeededList, PinResetModal } from '@/components/parent';
 import type { ChildProfile } from '@/types/auth';
 
 /**
@@ -21,35 +21,44 @@ import type { ChildProfile } from '@/types/auth';
  */
 export function ParentDashboardScreen() {
   const navigate = useNavigate();
-  const { children, isParentOrSuperAdmin, hasChildren } = useAuth();
+  const { children, isParentOrSuperAdmin, hasChildren, needsPinSetup, setParentPin } = useAuth();
   const {
     isAuthorized,
     isPinModalOpen,
     pinError,
     isCreatingPin,
+    isVerifying,
     requestAccess,
     verifyPin,
-    createPin,
     closePinModal,
   } = useParentDashboardAccess();
 
   // Modal state for edit/delete
   const [editingChild, setEditingChild] = useState<ChildProfile | null>(null);
   const [deletingChild, setDeletingChild] = useState<ChildProfile | null>(null);
+  const [showPinReset, setShowPinReset] = useState(false);
+
+  // Redirect to PIN setup if they don't have one
+  useEffect(() => {
+    if (needsPinSetup) {
+      navigate('/setup-pin', { replace: true });
+    }
+  }, [needsPinSetup, navigate]);
 
   // Request PIN on mount if not authorized
   useEffect(() => {
-    if (!isAuthorized) {
+    if (!isAuthorized && !needsPinSetup) {
       requestAccess();
     }
-  }, [isAuthorized, requestAccess]);
+  }, [isAuthorized, needsPinSetup, requestAccess]);
 
   // Handle PIN submission
-  const handlePinSubmit = (pin: string) => {
+  const handlePinSubmit = async (pin: string) => {
     if (isCreatingPin) {
-      createPin(pin);
+      // This shouldn't happen anymore - PIN creation is in PinSetupScreen
+      await setParentPin(pin);
     } else {
-      verifyPin(pin);
+      await verifyPin(pin);
     }
   };
 
@@ -57,20 +66,42 @@ export function ParentDashboardScreen() {
   const handlePinClose = () => {
     closePinModal();
     if (!isAuthorized) {
-      navigate('/');
+      navigate('/home');
     }
   };
 
+  // Handle forgot PIN
+  const handleForgotPin = () => {
+    closePinModal();
+    setShowPinReset(true);
+  };
+
+  // Handle PIN reset success
+  const handlePinResetSuccess = () => {
+    setShowPinReset(false);
+    // They're now authorized since they just set a new PIN
+    requestAccess();
+  };
+
   // Show PIN modal if not authorized
-  if (!isAuthorized) {
+  if (!isAuthorized && !needsPinSetup) {
     return (
-      <PinModal
-        isOpen={isPinModalOpen}
-        onClose={handlePinClose}
-        onSubmit={handlePinSubmit}
-        isCreating={isCreatingPin}
-        error={pinError}
-      />
+      <>
+        <PinModal
+          isOpen={isPinModalOpen}
+          onClose={handlePinClose}
+          onSubmit={handlePinSubmit}
+          isCreating={isCreatingPin}
+          error={pinError}
+          isLoading={isVerifying}
+          onForgotPin={handleForgotPin}
+        />
+        <PinResetModal
+          isOpen={showPinReset}
+          onClose={() => setShowPinReset(false)}
+          onSuccess={handlePinResetSuccess}
+        />
+      </>
     );
   }
 
@@ -79,7 +110,7 @@ export function ParentDashboardScreen() {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center">
         <p className="text-gray-600 mb-4">Parent Dashboard is only available for parent accounts with children.</p>
-        <Button onClick={() => navigate('/')}>Go Home</Button>
+        <Button onClick={() => navigate('/home')}>Go Home</Button>
       </div>
     );
   }

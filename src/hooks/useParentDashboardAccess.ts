@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { useLocalStorage } from './useLocalStorage';
+import { useAuth } from '@/context/AuthContext';
+import { verifyPinOffline, hasCachedPin } from '@/lib/pinCache';
 
 interface UseParentDashboardAccessReturn {
   isAuthorized: boolean;
@@ -7,18 +8,21 @@ interface UseParentDashboardAccessReturn {
   isPinModalOpen: boolean;
   pinError: string | null;
   isCreatingPin: boolean;
+  isVerifying: boolean;
+  attemptsRemaining: number | null;
+  lockedUntil: Date | null;
 
   // Actions
   requestAccess: () => void;
-  verifyPin: (pin: string) => boolean;
-  createPin: (pin: string) => void;
+  verifyPin: (pin: string) => Promise<boolean>;
   closePinModal: () => void;
   revokeAccess: () => void;
-  resetPin: () => void;
 }
 
-const PIN_STORAGE_KEY = 'alice-spelling-run-parent-pin';
 export const SESSION_ACCESS_KEY = 'alice-spelling-run-parent-dashboard-access';
+
+// Legacy PIN key for migration detection
+const LEGACY_PIN_KEY = 'alice-spelling-run-parent-pin';
 
 /**
  * Revoke parent dashboard access from non-component code.
@@ -32,39 +36,34 @@ export function revokeParentDashboardAccess(): void {
  * Hook for managing Parent Dashboard access with PIN protection.
  *
  * Features:
- * - PIN protection for accessing the Parent Dashboard
+ * - PIN verification via Supabase RPC (online)
+ * - Offline fallback using cached bcrypt hash
+ * - Rate limiting with lockout display
  * - Session-based authorization (clears on browser/tab close)
- * - First-time PIN creation flow
- * - Uses same PIN as Word Bank parent mode for consistency
  */
 export function useParentDashboardAccess(): UseParentDashboardAccessReturn {
-  // Store PIN in localStorage (hashed for basic security)
-  // Shares the same PIN with Word Bank parent mode for consistency
-  const [storedPin, setStoredPin] = useLocalStorage<string | null>(PIN_STORAGE_KEY, null);
+  const { hasPinSet, verifyParentPin, needsPinSetup } = useAuth();
 
   // Session-based authorization state (clears when browser/tab closes)
   const [isAuthorized, setIsAuthorized] = useState(() => {
-    // Check sessionStorage for existing authorization
     return sessionStorage.getItem(SESSION_ACCESS_KEY) === 'true';
   });
 
   // PIN modal state
   const [isPinModalOpen, setIsPinModalOpen] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
-  const [isCreatingPin, setIsCreatingPin] = useState(false);
+  const [isVerifying, setIsVerifying] = useState(false);
+  const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
+  const [lockedUntil, setLockedUntil] = useState<Date | null>(null);
 
-  const hasPin = storedPin !== null;
+  // Check for legacy localStorage PIN (for existing users)
+  const hasLegacyPin = localStorage.getItem(LEGACY_PIN_KEY) !== null;
 
-  // Simple hash function for PIN (not cryptographically secure, but prevents casual viewing)
-  const hashPin = useCallback((pin: string): string => {
-    let hash = 0;
-    for (let i = 0; i < pin.length; i++) {
-      const char = pin.charCodeAt(i);
-      hash = ((hash << 5) - hash) + char;
-      hash = hash & hash; // Convert to 32bit integer
-    }
-    return hash.toString(36);
-  }, []);
+  // Has PIN set either in Supabase or locally cached
+  const hasPin = hasPinSet || hasCachedPin() || hasLegacyPin;
+
+  // Is creating PIN if they need PIN setup (no PIN set yet)
+  const isCreatingPin = needsPinSetup;
 
   // Request access to Parent Dashboard (triggers PIN modal)
   const requestAccess = useCallback(() => {
@@ -74,52 +73,89 @@ export function useParentDashboardAccess(): UseParentDashboardAccessReturn {
     }
 
     setPinError(null);
-    if (!hasPin) {
-      // First time - need to create PIN
-      setIsCreatingPin(true);
-    } else {
-      setIsCreatingPin(false);
-    }
+    setAttemptsRemaining(null);
+    setLockedUntil(null);
     setIsPinModalOpen(true);
-  }, [hasPin, isAuthorized]);
+  }, [isAuthorized]);
 
-  // Verify entered PIN against stored PIN
-  const verifyPin = useCallback((pin: string): boolean => {
-    if (!storedPin) return false;
-
-    const hashedInput = hashPin(pin);
-    if (hashedInput === storedPin) {
-      setIsAuthorized(true);
-      sessionStorage.setItem(SESSION_ACCESS_KEY, 'true');
-      setIsPinModalOpen(false);
-      setPinError(null);
-      return true;
-    } else {
-      setPinError('Incorrect PIN. Please try again.');
-      return false;
-    }
-  }, [storedPin, hashPin]);
-
-  // Create a new PIN (first-time setup)
-  const createPin = useCallback((pin: string) => {
-    if (pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      setPinError('PIN must be exactly 4 digits');
-      return;
-    }
-
-    const hashedPin = hashPin(pin);
-    setStoredPin(hashedPin);
-    setIsAuthorized(true);
-    sessionStorage.setItem(SESSION_ACCESS_KEY, 'true');
-    setIsPinModalOpen(false);
-    setIsCreatingPin(false);
+  // Verify entered PIN against Supabase (with offline fallback)
+  const verifyPin = useCallback(async (pin: string): Promise<boolean> => {
+    setIsVerifying(true);
     setPinError(null);
-  }, [hashPin, setStoredPin]);
+    setAttemptsRemaining(null);
+    setLockedUntil(null);
+
+    try {
+      // Check if locked
+      if (lockedUntil && lockedUntil > new Date()) {
+        const mins = Math.ceil((lockedUntil.getTime() - Date.now()) / 60000);
+        setPinError(`Too many attempts. Try again in ${mins} minute${mins === 1 ? '' : 's'}.`);
+        setIsVerifying(false);
+        return false;
+      }
+
+      // Try online verification first
+      const result = await verifyParentPin(pin);
+
+      if (result.success) {
+        setIsAuthorized(true);
+        sessionStorage.setItem(SESSION_ACCESS_KEY, 'true');
+        setIsPinModalOpen(false);
+
+        // Clear legacy PIN if it exists (migration complete)
+        localStorage.removeItem(LEGACY_PIN_KEY);
+
+        setIsVerifying(false);
+        return true;
+      }
+
+      // Handle failure
+      if (result.lockedUntil) {
+        const lockDate = new Date(result.lockedUntil);
+        setLockedUntil(lockDate);
+        const mins = Math.ceil((lockDate.getTime() - Date.now()) / 60000);
+        setPinError(`Too many attempts. Locked for ${mins} minute${mins === 1 ? '' : 's'}.`);
+      } else if (result.attemptsRemaining !== undefined) {
+        setAttemptsRemaining(result.attemptsRemaining);
+        setPinError(`Incorrect PIN. ${result.attemptsRemaining} attempt${result.attemptsRemaining === 1 ? '' : 's'} remaining.`);
+      } else {
+        setPinError(result.error || 'Incorrect PIN. Please try again.');
+      }
+
+      setIsVerifying(false);
+      return false;
+    } catch {
+      // Network error - try offline verification
+      console.warn('[ParentDashboardAccess] Online verification failed, trying offline...');
+
+      try {
+        const offlineResult = await verifyPinOffline(pin);
+
+        if (offlineResult) {
+          setIsAuthorized(true);
+          sessionStorage.setItem(SESSION_ACCESS_KEY, 'true');
+          setIsPinModalOpen(false);
+          setIsVerifying(false);
+          return true;
+        }
+
+        setPinError('Incorrect PIN. Please try again.');
+        setIsVerifying(false);
+        return false;
+      } catch {
+        setPinError('Unable to verify PIN. Please check your connection.');
+        setIsVerifying(false);
+        return false;
+      }
+    }
+  }, [verifyParentPin, lockedUntil]);
 
   // Close PIN modal without completing action
   const closePinModal = useCallback(() => {
     setIsPinModalOpen(false);
     setPinError(null);
+    setAttemptsRemaining(null);
+    setLockedUntil(null);
   }, []);
 
   // Revoke current session access (user must re-enter PIN)
@@ -128,24 +164,18 @@ export function useParentDashboardAccess(): UseParentDashboardAccessReturn {
     sessionStorage.removeItem(SESSION_ACCESS_KEY);
   }, []);
 
-  // Reset PIN (for testing/debugging - could be hidden in production)
-  const resetPin = useCallback(() => {
-    setStoredPin(null);
-    setIsAuthorized(false);
-    sessionStorage.removeItem(SESSION_ACCESS_KEY);
-  }, [setStoredPin]);
-
   return {
     isAuthorized,
     hasPin,
     isPinModalOpen,
     pinError,
     isCreatingPin,
+    isVerifying,
+    attemptsRemaining,
+    lockedUntil,
     requestAccess,
     verifyPin,
-    createPin,
     closePinModal,
     revokeAccess,
-    resetPin,
   };
 }

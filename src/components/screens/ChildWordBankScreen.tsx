@@ -5,7 +5,7 @@ import { useParentDashboardAccess } from '@/hooks';
 import { GameProvider } from '@/context/GameContextDB';
 import { ParentWordBank, PinModal } from '@/components/wordbank';
 import { Button } from '@/components/common';
-import { ChildHeaderCard } from '@/components/parent';
+import { ChildHeaderCard, PinResetModal } from '@/components/parent';
 import { EditProfileModal, DeleteConfirmDialog, ResetProgressDialog } from '@/components/profiles';
 
 /**
@@ -17,15 +17,15 @@ import { EditProfileModal, DeleteConfirmDialog, ResetProgressDialog } from '@/co
 export function ChildWordBankScreen() {
   const { childId } = useParams<{ childId: string }>();
   const navigate = useNavigate();
-  const { children, isParentOrSuperAdmin, hasChildren } = useAuth();
+  const { children, isParentOrSuperAdmin, hasChildren, setParentPin } = useAuth();
   const {
     isAuthorized,
     isPinModalOpen,
     pinError,
     isCreatingPin,
+    isVerifying,
     requestAccess,
     verifyPin,
-    createPin,
     closePinModal,
   } = useParentDashboardAccess();
 
@@ -33,6 +33,7 @@ export function ChildWordBankScreen() {
   const [showEditModal, setShowEditModal] = useState(false);
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showResetDialog, setShowResetDialog] = useState(false);
+  const [showPinReset, setShowPinReset] = useState(false);
 
   // Find the current child
   const currentChild = children.find(c => c.id === childId);
@@ -45,11 +46,11 @@ export function ChildWordBankScreen() {
   }, [isAuthorized, requestAccess]);
 
   // Handle PIN submission
-  const handlePinSubmit = (pin: string) => {
+  const handlePinSubmit = async (pin: string) => {
     if (isCreatingPin) {
-      createPin(pin);
+      await setParentPin(pin);
     } else {
-      verifyPin(pin);
+      await verifyPin(pin);
     }
   };
 
@@ -61,16 +62,37 @@ export function ChildWordBankScreen() {
     }
   };
 
+  // Handle forgot PIN
+  const handleForgotPin = () => {
+    closePinModal();
+    setShowPinReset(true);
+  };
+
+  // Handle PIN reset success
+  const handlePinResetSuccess = () => {
+    setShowPinReset(false);
+    requestAccess();
+  };
+
   // Show PIN modal if not authorized
   if (!isAuthorized) {
     return (
-      <PinModal
-        isOpen={isPinModalOpen}
-        onClose={handlePinClose}
-        onSubmit={handlePinSubmit}
-        isCreating={isCreatingPin}
-        error={pinError}
-      />
+      <>
+        <PinModal
+          isOpen={isPinModalOpen}
+          onClose={handlePinClose}
+          onSubmit={handlePinSubmit}
+          isCreating={isCreatingPin}
+          error={pinError}
+          isLoading={isVerifying}
+          onForgotPin={handleForgotPin}
+        />
+        <PinResetModal
+          isOpen={showPinReset}
+          onClose={() => setShowPinReset(false)}
+          onSuccess={handlePinResetSuccess}
+        />
+      </>
     );
   }
 
@@ -79,7 +101,7 @@ export function ChildWordBankScreen() {
     return (
       <div className="flex-1 p-8 flex flex-col items-center justify-center">
         <p className="text-gray-600 mb-4">Parent Dashboard is only available for parent accounts with children.</p>
-        <Button onClick={() => navigate('/')}>Go Home</Button>
+        <Button onClick={() => navigate('/home')}>Go Home</Button>
       </div>
     );
   }
