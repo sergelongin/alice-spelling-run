@@ -17,7 +17,6 @@ import { Q } from '@nozbe/watermelondb';
 import { database, wordCatalogCollection } from './index';
 import { WordCatalog } from './models/WordCatalog';
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
-import type { GradeLevel } from '@/data/gradeWords';
 
 // Storage key for last sync timestamp
 const WORD_CATALOG_SYNC_KEY = 'alice-spelling-run-word-catalog-sync';
@@ -189,28 +188,49 @@ export async function syncWordCatalog(
 
         if (existing.length > 0) {
           // Update existing record
+          // Use _raw.column_name pattern for reliable persistence
+          // Decorated setters may not persist due to Vite/esbuild decorator transpilation issues
           await existing[0].update((record: WordCatalog) => {
-            record.wordText = word.word;
-            record.wordNormalized = word.word_normalized;
-            record.definition = word.definition;
-            record.exampleSentence = word.example || undefined;
-            record.gradeLevel = word.grade_level as GradeLevel;
-            record.isCustom = word.is_custom;
-            record.createdBy = word.created_by || undefined;
-            record.serverUpdatedAt = new Date(word.updated_at).getTime();
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.word_text = word.word;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.word_normalized = word.word_normalized;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.definition = word.definition;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.example_sentence = word.example || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.grade_level = word.grade_level;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.is_custom = word.is_custom;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.created_by = word.created_by || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.server_updated_at = new Date(word.updated_at).getTime();
           });
         } else {
           // Create new record
+          // Use _raw.column_name pattern for reliable persistence
           await wordCatalogCollection.create((record: WordCatalog) => {
-            record.wordText = word.word;
-            record.wordNormalized = word.word_normalized;
-            record.definition = word.definition;
-            record.exampleSentence = word.example || undefined;
-            record.gradeLevel = word.grade_level as GradeLevel;
-            record.isCustom = word.is_custom;
-            record.createdBy = word.created_by || undefined;
-            record.serverId = word.id;
-            record.serverUpdatedAt = new Date(word.updated_at).getTime();
+            record._raw.id = crypto.randomUUID();
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.word_text = word.word;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.word_normalized = word.word_normalized;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.definition = word.definition;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.example_sentence = word.example || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.grade_level = word.grade_level;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.is_custom = word.is_custom;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.created_by = word.created_by || null;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.server_id = word.id;
+            // @ts-expect-error - WatermelonDB _raw setters not typed
+            record._raw.server_updated_at = new Date(word.updated_at).getTime();
           });
         }
       }

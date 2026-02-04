@@ -151,6 +151,11 @@ async function reconcileWordProgress(
 
     if (localMatch) {
       const transformed = transformWordProgressFromServer(serverRecord);
+
+      // Server is authoritative for introduced_at (computed from word_attempts)
+      // Migration 037 computes introduced_at from earliest attempt timestamp
+      // No "local wins" logic needed - server value should always be used
+
       updated.push({
         ...transformed,
         id: localMatch.id, // Use LOCAL id

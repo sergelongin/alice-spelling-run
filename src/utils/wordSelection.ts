@@ -1,6 +1,25 @@
 import { Word } from '@/types';
 
 /**
+ * Leitner intervals in days for each mastery level
+ * Index = mastery level (0-5)
+ */
+export const LEITNER_INTERVALS_DAYS = [0, 1, 3, 7, 14, 7] as const;
+
+/**
+ * Compute the next review timestamp based on mastery level and last attempt time.
+ * Uses Leitner spaced repetition intervals.
+ *
+ * @param masteryLevel - Current mastery level (0-5)
+ * @param lastAttemptAt - Timestamp of last attempt (ms since epoch)
+ * @returns Next review timestamp (ms since epoch)
+ */
+export function computeNextReviewAt(masteryLevel: number, lastAttemptAt: number): number {
+  const intervalDays = LEITNER_INTERVALS_DAYS[Math.min(masteryLevel, 5)];
+  return lastAttemptAt + (intervalDays * 24 * 60 * 60 * 1000);
+}
+
+/**
  * Configuration for the spaced repetition and gradual introduction system
  */
 export const SPACED_REP_CONFIG = {
@@ -172,6 +191,20 @@ const pickDueReviewWords = (reviewWords: Word[], count: number): Word[] => {
 };
 
 /**
+ * Pick learning words that are due for review (respects next_review_at)
+ * Learning words also follow spaced repetition, just with shorter intervals
+ */
+const pickDueLearningWords = (learningWords: Word[], count: number): Word[] => {
+  const due = learningWords.filter(isWordDueForReview);
+  if (due.length >= count) {
+    return pickPrioritizedByAge(due, count);
+  }
+  // If not enough due, include some not-yet-due learning words
+  const notDue = learningWords.filter(w => !isWordDueForReview(w));
+  return [...pickPrioritizedByAge(due, due.length), ...pickRandom(notDue, count - due.length)];
+};
+
+/**
  * Result of word selection, including which words to introduce
  */
 export interface WordSelectionResult {
@@ -267,14 +300,14 @@ export const selectWordsForSessionDetailed = (
     spotCheckWords.push(...spotChecks);
   }
 
-  // 3. Add learning words (high frequency practice)
+  // 3. Add learning words (high frequency practice, but respects next_review_at)
   const remainingSlots = count - selected.length;
   const learningQuota = Math.min(
     Math.ceil(remainingSlots * 0.6), // ~60% of remaining slots
     learning.length
   );
   if (learningQuota > 0) {
-    selected.push(...pickPrioritizedByAge(learning, learningQuota));
+    selected.push(...pickDueLearningWords(learning, learningQuota));
   }
 
   // 4. Fill remaining with review words
